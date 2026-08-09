@@ -1,0 +1,37 @@
+port: 7890
+socks-port: 7891
+allow-lan: true
+mode: rule
+log-level: info
+proxies:
+  - name: 香港 A01 联通优化
+    type: ss
+    server: 127.0.0.1
+    port: 10001
+    cipher: aes-128-gcm
+    password: test
+  - name: 香港 A02 电信优化
+    type: ss
+    server: 127.0.0.1
+    port: 10002
+    cipher: aes-128-gcm
+    password: test
+  - name: 美国 A01 Gemini
+    type: ss
+    server: 127.0.0.1
+    port: 10003
+    cipher: aes-128-gcm
+    password: test
+  - name: 新加坡 A01 电信优化
+    type: ss
+    server: 127.0.0.1
+    port: 10004
+    cipher: aes-128-gcm
+    password: test
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - 香港 A01 联通优化
+rules:
+  - MATCH,PROXY

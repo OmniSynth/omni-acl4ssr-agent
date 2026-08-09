@@ -1,0 +1,162 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light dark;
+}
+
+/* —— 明亮：高对比墨色字，少灰 —— */
+:root,
+[data-theme="light"] {
+  --app-bg: #f6f5f2;
+  --app-bg-glow: #e8f0eb;
+  --app-header: #ffffff;
+  --app-surface: #ffffff;
+  --app-surface-2: #ffffff;
+  --app-composer: #f7f7f5;
+  --app-menu: #ffffff;
+  --app-input: #ffffff;
+  --app-hover: rgba(15, 118, 110, 0.08);
+  --app-border: rgba(24, 24, 27, 0.12);
+  --app-fg: #0a0a0a;
+  --app-fg-soft: #27272a;
+  --app-muted: #3f3f46;
+  --app-faint: #52525b;
+  --app-accent: #0f766e;
+  --app-accent-soft: rgba(15, 118, 110, 0.1);
+  --app-accent-fg: #0f766e;
+  --app-code: #0f766e;
+  --app-danger: #e11d48;
+  --app-danger-soft: rgba(225, 29, 72, 0.08);
+  --app-ok: #047857;
+  --app-ok-soft: rgba(4, 120, 87, 0.1);
+  --app-warn: #b45309;
+  --app-warn-soft: rgba(180, 83, 9, 0.1);
+  --app-shadow: none;
+  --app-preview: rgba(15, 118, 110, 0.06);
+  --app-preview-border: rgba(15, 118, 110, 0.22);
+  --app-nav-active: #0a0a0a;
+}
+
+/* —— 暗色：近白正文，次级字也保持清晰 —— */
+[data-theme="dark"] {
+  --app-bg: #0c0c0e;
+  --app-bg-glow: #12181a;
+  --app-header: #121214;
+  --app-surface: #121214;
+  --app-surface-2: #121214;
+  --app-composer: #1a1a1d;
+  --app-menu: #1a1a1d;
+  --app-input: #1a1a1d;
+  --app-hover: rgba(45, 212, 191, 0.1);
+  --app-border: rgba(250, 250, 250, 0.12);
+  --app-fg: #fafafa;
+  --app-fg-soft: #e4e4e7;
+  --app-muted: #d4d4d8;
+  --app-faint: #a1a1aa;
+  --app-accent: #2dd4bf;
+  --app-accent-soft: rgba(45, 212, 191, 0.14);
+  --app-accent-fg: #5eead4;
+  --app-code: #5eead4;
+  --app-danger: #fb7185;
+  --app-danger-soft: rgba(251, 113, 133, 0.12);
+  --app-ok: #34d399;
+  --app-ok-soft: rgba(52, 211, 153, 0.12);
+  --app-warn: #fbbf24;
+  --app-warn-soft: rgba(251, 191, 36, 0.12);
+  --app-shadow: none;
+  --app-preview: rgba(45, 212, 191, 0.08);
+  --app-preview-border: rgba(45, 212, 191, 0.28);
+  --app-nav-active: #fafafa;
+}
+
+@theme inline {
+  --color-app: var(--app-bg);
+  --color-header: var(--app-header);
+  --color-surface: var(--app-surface);
+  --color-surface-2: var(--app-surface-2);
+  --color-composer: var(--app-composer);
+  --color-menu: var(--app-menu);
+  --color-input: var(--app-input);
+  --color-hover: var(--app-hover);
+  --color-edge: var(--app-border);
+  --color-fg: var(--app-fg);
+  --color-fg-soft: var(--app-fg-soft);
+  --color-muted: var(--app-muted);
+  --color-faint: var(--app-faint);
+  --color-accent: var(--app-accent);
+  --color-accent-soft: var(--app-accent-soft);
+  --color-accent-fg: var(--app-accent-fg);
+  --color-code: var(--app-code);
+  --color-danger: var(--app-danger);
+  --color-danger-soft: var(--app-danger-soft);
+  --color-ok: var(--app-ok);
+  --color-ok-soft: var(--app-ok-soft);
+  --color-warn: var(--app-warn);
+  --color-warn-soft: var(--app-warn-soft);
+  --color-preview: var(--app-preview);
+  --color-preview-border: var(--app-preview-border);
+  --color-nav-active: var(--app-nav-active);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  color: var(--app-fg);
+  font-family:
+    "Plus Jakarta Sans",
+    "Noto Sans SC",
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+  font-feature-settings: "ss01" on, "cv11" on;
+  -webkit-font-smoothing: antialiased;
+  background-color: var(--app-bg);
+}
+
+/* 全局隐藏滚动条，仍可滚轮/触控板滚动 */
+*,
+*::before,
+*::after {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  font: inherit;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--app-accent) 28%, transparent);
+  color: var(--app-fg);
+}
+
+@keyframes tip-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

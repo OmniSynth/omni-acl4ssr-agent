@@ -1,0 +1,21 @@
+{
+	"luci-app-omni-acl4ssr-agent": {
+		"description": "Grant access to omni-acl4ssr-agent",
+		"read": {
+			"uci": ["omni_acl4ssr_agent"],
+			"ubus": {
+				"service": ["list"],
+				"rc": ["*"]
+			},
+			"file": {
+				"/etc/omni-acl4ssr-agent/config.json": ["read"]
+			}
+		},
+		"write": {
+			"uci": ["omni_acl4ssr_agent"],
+			"file": {
+				"/etc/omni-acl4ssr-agent/config.json": ["write"]
+			}
+		}
+	}
+}

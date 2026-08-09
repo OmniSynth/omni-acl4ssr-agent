@@ -1,0 +1,13 @@
+{
+	"admin/services/omni-acl4ssr-agent": {
+		"title": "订阅转换",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "omni-acl4ssr-agent/app"
+		},
+		"depends": {
+			"acl": ["luci-app-omni-acl4ssr-agent"]
+		}
+	}
+}

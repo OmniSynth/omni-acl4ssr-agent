@@ -1,0 +1,205 @@
+{
+  "profile": {
+    "name": "airport",
+    "upstream_url": "https://is.domainforsub.work/sub/d927cb40c5334099/clash",
+    "default_group": "🚀 默认",
+    "enabled": true,
+    "user_agent": "clash.meta/omni-acl4ssr-agent",
+    "upstream_urls": [
+      "https://is.domainforsub.work/sub/d927cb40c5334099/clash"
+    ]
+  },
+  "groups_mode": "managed",
+  "groups": [
+    {
+      "id": "g-hk",
+      "name": "🇭🇰 香港",
+      "group_type": "url_test",
+      "filter": "(?i)香港|Hong Kong",
+      "proxies": [],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-tw",
+      "name": "🇹🇼 台湾",
+      "group_type": "url_test",
+      "filter": "(?i)台湾|Taiwan",
+      "proxies": [],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-jp",
+      "name": "🇯🇵 日本",
+      "group_type": "url_test",
+      "filter": "(?i)日本|Japan",
+      "proxies": [],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-sg",
+      "name": "🇸🇬 新加坡",
+      "group_type": "url_test",
+      "filter": "(?i)新加坡|Singapore|狮城",
+      "proxies": [],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-kr",
+      "name": "🇰🇷 韩国",
+      "group_type": "url_test",
+      "filter": "(?i)韩国|Korea|首尔",
+      "proxies": [],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-us",
+      "name": "🇺🇸 美国",
+      "group_type": "url_test",
+      "filter": "(?i)美国|Gemini|United States",
+      "proxies": [],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-ca",
+      "name": "🇨🇦 加拿大",
+      "group_type": "url_test",
+      "filter": "(?i)加拿大|Canada",
+      "proxies": [],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-in",
+      "name": "🇮🇳 印度",
+      "group_type": "url_test",
+      "filter": "(?i)印度|India",
+      "proxies": [],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-au",
+      "name": "🇦🇺 澳大利亚",
+      "group_type": "url_test",
+      "filter": "(?i)澳大利亚|澳洲|Australia",
+      "proxies": [],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-ai",
+      "name": "🤖 AI",
+      "group_type": "select",
+      "filter": "",
+      "proxies": ["🇺🇸 美国", "🇯🇵 日本", "🇸🇬 新加坡", "🇭🇰 香港"],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-binance",
+      "name": "💰 币安",
+      "group_type": "select",
+      "filter": "",
+      "proxies": ["🇭🇰 香港", "🇸🇬 新加坡", "🇯🇵 日本", "🇺🇸 美国"],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-netflix",
+      "name": "📺 奈飞",
+      "group_type": "select",
+      "filter": "",
+      "proxies": ["🇸🇬 新加坡", "🇯🇵 日本", "🇹🇼 台湾", "🇺🇸 美国", "🇭🇰 香港"],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-chain",
+      "name": "⛓ 链路",
+      "group_type": "select",
+      "filter": "",
+      "proxies": ["🇭🇰 香港"],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    },
+    {
+      "id": "g-default",
+      "name": "🚀 默认",
+      "group_type": "select",
+      "filter": "",
+      "proxies": [
+        "🇭🇰 香港",
+        "🇹🇼 台湾",
+        "🇯🇵 日本",
+        "🇸🇬 新加坡",
+        "🇰🇷 韩国",
+        "🇺🇸 美国",
+        "🇨🇦 加拿大",
+        "🇮🇳 印度",
+        "🇦🇺 澳大利亚",
+        "DIRECT"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "tolerance": 50,
+      "lazy": true
+    }
+  ],
+  "rulesets": [
+    {
+      "id": "r-ai",
+      "name": "AI",
+      "group": "🤖 AI",
+      "rules": "DOMAIN-SUFFIX,openai.com\nDOMAIN-SUFFIX,chatgpt.com\nDOMAIN-SUFFIX,anthropic.com\nDOMAIN-SUFFIX,claude.ai\nDOMAIN-SUFFIX,cursor.sh\nDOMAIN-SUFFIX,cursor.com\nDOMAIN-KEYWORD,gemini\nDOMAIN-SUFFIX,googleapis.com\nDOMAIN-SUFFIX,deepseek.com\nDOMAIN-SUFFIX,api.deepseek.com\nGEOSITE,openai",
+      "enabled": true
+    },
+    {
+      "id": "r-binance",
+      "name": "币安",
+      "group": "💰 币安",
+      "rules": "DOMAIN-SUFFIX,binance.com\nDOMAIN-SUFFIX,binance.me\nDOMAIN-SUFFIX,bnapp.net\nDOMAIN-SUFFIX,bnbstatic.com\nDOMAIN-KEYWORD,binance",
+      "enabled": true
+    },
+    {
+      "id": "r-netflix",
+      "name": "奈飞",
+      "group": "📺 奈飞",
+      "rules": "DOMAIN-SUFFIX,netflix.com\nDOMAIN-SUFFIX,netflix.net\nDOMAIN-SUFFIX,nflxvideo.net\nDOMAIN-SUFFIX,nflxso.net\nDOMAIN-SUFFIX,nflximg.net\nGEOSITE,netflix",
+      "enabled": true
+    }
+  ],
+  "landings": [],
+  "lan_routes": []
+}

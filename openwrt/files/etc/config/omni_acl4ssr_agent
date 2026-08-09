@@ -1,0 +1,7 @@
+config status 'status'
+
+config omni_acl4ssr_agent 'config'
+	option enabled '1'
+	option listen '0.0.0.0:8787'
+	# 麦克风等需 HTTPS；空字符串或 off 关闭。默认由程序用 HTTP 端口+1（8788）
+	option tls_listen '0.0.0.0:8788'
