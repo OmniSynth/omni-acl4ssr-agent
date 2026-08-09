@@ -1,16 +1,63 @@
 # omni-acl4ssr-agent
 
-轻量本地 **Mihomo / Clash Meta** 订阅转换控制台（Rust + React）。
+轻量本地 **Mihomo / Clash Meta** 订阅转换控制台（Rust + React），面向 OpenWrt / ImmortalWrt + Nikki。
 
-- 拉取机场 Clash 订阅
-- 按正则做国家 / 自定义策略组
-- 合并本地规则集（AI、币安、奈飞等）
-- 追加 SOCKS5 / HTTP 落地，并支持 `dialer-proxy` 前置梯子
-- 提供稳定订阅地址给 Nikki：`http://<host>:8787/sub`
+- 拉取并聚合机场 Clash 订阅
+- 按国家 / 自定义策略组编排出口
+- 规则集（AI、币安、奈飞等）与局域网分流
+- SOCKS5 / HTTP 落地代理，支持 `dialer-proxy` 链式
+- 侧栏 AI Agent 协助改配置；一键更新 Nikki、打开控制面板
+- 稳定订阅地址：`http://<host>:8787/sub`
+
+> 截图经 [jsDelivr](https://www.jsdelivr.com/) 加速：`cdn.jsdelivr.net/gh/OmniSynth/omni-acl4ssr-agent@main/...`
+
+## 界面预览
+
+### 概况
+
+上游订阅、档案与 Nikki 订阅地址；侧栏 AI 助手随时可用。
+
+![概况](https://cdn.jsdelivr.net/gh/OmniSynth/omni-acl4ssr-agent@main/docs/images/overview.png)
+
+### 策略组
+
+自动托管地区组，或完全自定义策略组。
+
+![策略组](https://cdn.jsdelivr.net/gh/OmniSynth/omni-acl4ssr-agent@main/docs/images/strategy-group.png)
+
+### 规则集
+
+按域名 / GEO 绑定策略组。
+
+![规则集](https://cdn.jsdelivr.net/gh/OmniSynth/omni-acl4ssr-agent@main/docs/images/rule-set.png)
+
+### 局域网分流
+
+从 OpenWrt DHCP 选择设备（主机名 · IP · MAC），按源 IP 整机分流。
+
+![局域网分流](https://cdn.jsdelivr.net/gh/OmniSynth/omni-acl4ssr-agent@main/docs/images/lan-split.png)
+
+### 落地代理
+
+SOCKS5 / HTTP 落地，可配合前置策略组做链式代理。
+
+![落地代理](https://cdn.jsdelivr.net/gh/OmniSynth/omni-acl4ssr-agent@main/docs/images/proxy-egress-rules.png)
+
+### AI 模型与供应商
+
+切换 Gemini / DeepSeek，配置 Key、上下文与思考模式。
+
+![模型与供应商](https://cdn.jsdelivr.net/gh/OmniSynth/omni-acl4ssr-agent@main/docs/images/model-provider.png)
+
+### 对话历史
+
+多轮配置对话、归档与分支。
+
+![对话历史](https://cdn.jsdelivr.net/gh/OmniSynth/omni-acl4ssr-agent@main/docs/images/chat-history.png)
 
 ## 快速开始
 
-### 0. 构建前端（首次或改 UI 后）
+### 构建前端
 
 ```bash
 cd web
@@ -18,57 +65,58 @@ npm install
 npm run build
 ```
 
-### 1. 后端
+### 运行后端
 
 ```bash
 cargo run -p omni-acl4ssr-agent
 ```
 
-浏览器打开 `http://127.0.0.1:8787/` 进入控制台。
+浏览器打开 `http://127.0.0.1:8787/`。
 
 默认监听 `0.0.0.0:8787`，配置写入 `./data/config.json`。
 
-环境变量：
-
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `OMNI_LISTEN` | `0.0.0.0:8787` | 监听地址 |
+| `OMNI_LISTEN` | `0.0.0.0:8787` | HTTP 监听 |
+| `OMNI_TLS_LISTEN` | HTTP 端口 +1 | HTTPS（语音等）；空字符串关闭 |
 | `OMNI_DATA_DIR` | `data` | 配置目录 |
 | `OMNI_WEB_DIR` | `web/dist` | 前端静态目录 |
 
-### 2. 前端（开发）
+### 前端开发
 
 ```bash
-cd web
-npm install
-npm run dev
+cd web && npm install && npm run dev
 ```
 
 开发服 `http://127.0.0.1:5173`，API 代理到 `8787`。
 
-### 3. 前端（生产）
+## OpenWrt / ImmortalWrt
+
+仓库 [`openwrt/`](openwrt/) 含 procd 服务、UCI、LuCI 菜单与一键部署脚本：
 
 ```bash
-cd web && npm run build
-# 然后 cargo run，由 Axum 托管 web/dist
+# 依赖：rustup target x86_64-unknown-linux-musl、x86_64-linux-musl-gcc、npm
+./openwrt/deploy-to-router.sh root@172.16.1.1
 ```
+
+| 入口 | 地址 |
+|------|------|
+| LuCI | 服务 → 订阅转换 |
+| Web 控制台 | `http://路由器IP:8787/` |
+| HTTPS（语音） | `https://路由器IP:8788/` |
+| Nikki 订阅 | `http://127.0.0.1:8787/sub` |
+
+顶栏提供 **打开面板**（Nikki UI）与 **更新 Nikki**（拉取订阅并 reload）。
 
 ## Nikki 接入
 
-1. 概况页填写**上游机场订阅 URL** 并保存
-2. 按需调整策略组 / 规则集 / 落地代理
-3. 预览页点「立即转换」确认成功
-4. Nikki → 订阅 → URL 填：
+1. 概况页填写上游机场订阅并保存  
+2. 调整策略组 / 规则集 / 局域网分流 / 落地代理  
+3. 「立即转换」确认成功  
+4. Nikki 订阅 URL 填 `http://127.0.0.1:8787/sub`（本机）或路由器局域网地址  
+5. 点顶栏「更新 Nikki」生效  
 
-```text
-http://172.16.1.2:8787/sub
-```
-
-（把 IP 换成实际跑本服务的机器）
-
-5. 更新订阅；默认出口为「🚀 默认」（骨架里指向香港等）
-
-## API
+## API（节选）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -77,43 +125,19 @@ http://172.16.1.2:8787/sub
 | GET/PUT | `/api/groups` | 策略组 |
 | GET/PUT | `/api/rulesets` | 规则集 |
 | GET/PUT | `/api/landings` | 落地代理 |
-| POST | `/api/convert` | `{"include_yaml":true}` 立刻转换 |
-| GET | `/sub` | Nikki 订阅（YAML） |
-
-## 落地链式代理
-
-在「落地代理」中新增 SOCKS5/HTTP，`dialer-proxy` 选 `🇭🇰 香港`（或其它组）。  
-转换结果里该节点带 `dialer-proxy`，并加入「⛓ 链路」组；规则集可把指定域名指到该组。
-
-## OpenWrt / ImmortalWrt 插件
-
-仓库内 [`openwrt/`](openwrt/) 含：
-
-- `files/etc/init.d/omni-acl4ssr-agent`：procd 服务
-- `files/etc/config/omni_acl4ssr_agent`：UCI
-- `files/usr/share/luci/menu.d/...`：LuCI **服务 → 订阅转换**
-- `files/www/luci-static/resources/view/omni-acl4ssr-agent/app.js`：控制台 iframe 页
-- `seed-config.json`：默认上游订阅与策略骨架
-- `deploy-to-router.sh`：本机 musl 交叉编译并一键部署
-
-```bash
-# 依赖：rustup target x86_64-unknown-linux-musl、x86_64-linux-musl-gcc、npm
-./openwrt/deploy-to-router.sh root@172.16.1.1
-```
-
-部署后：
-
-| 入口 | 地址 |
-|------|------|
-| LuCI | 服务 → 订阅转换 |
-| Web 控制台 | `http://路由器IP:8787/` |
-| Nikki 订阅 | `http://127.0.0.1:8787/sub` |
-
-当前测试机已验证：`/api/convert` 成功（约 180 节点 / 8 组），Nikki 运行配置含香港/美国/新加坡/AI/币安/奈飞/默认组。
+| GET/PUT | `/api/lan-routes` | 局域网分流 |
+| GET | `/api/dhcp-clients` | OpenWrt DHCP 列表 |
+| POST | `/api/nikki/update-subscription` | 更新并重载 Nikki |
+| POST | `/api/convert` | 立即转换 |
+| GET | `/sub` | Nikki 订阅 YAML |
 
 ## 说明
 
-- 不做完整 Subconverter / ACL4SSR `.ini` 兼容
-- MVP 单档案，配置为本地 JSON 文件
-- 订阅结果缓存约 60 秒
-- OpenWrt 包为预编译二进制安装（非完整 SDK 源码包）
+- 不做完整 Subconverter / ACL4SSR `.ini` 兼容  
+- 单档案，配置为本地 JSON  
+- 订阅结果有短时缓存  
+- OpenWrt 为预编译二进制安装（非完整 SDK 源码包）  
+
+## 许可证
+
+MIT
