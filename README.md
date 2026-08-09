@@ -92,10 +92,29 @@ cd web && npm install && npm run dev
 
 ## OpenWrt / ImmortalWrt
 
-仓库 [`openwrt/`](openwrt/) 含 procd 服务、UCI、LuCI 菜单与一键部署脚本：
+### 安装（推荐）
+
+从 [GitHub Releases](https://github.com/OmniSynth/omni-acl4ssr-agent/releases) 下载 **x86_64** `.ipk`：
 
 ```bash
-# 依赖：rustup target x86_64-unknown-linux-musl、x86_64-linux-musl-gcc、npm
+opkg install omni-acl4ssr-agent_1.0.0_x86_64.ipk
+```
+
+推送 `v*` tag 时，CI 会自动交叉编译并上传 ipk。
+
+本机打包：
+
+```bash
+# 依赖：rustup target x86_64-unknown-linux-musl、x86_64-linux-musl-gcc（或 musl-gcc）、npm
+./openwrt/build-ipk.sh
+# 产物：dist/omni-acl4ssr-agent_<version>_x86_64.ipk
+```
+
+### 开发部署
+
+仓库 [`openwrt/`](openwrt/) 含 procd 服务、UCI、LuCI 菜单；也可直接推到路由器：
+
+```bash
 ./openwrt/deploy-to-router.sh root@172.16.1.1
 ```
 
@@ -136,7 +155,7 @@ cd web && npm install && npm run dev
 - 不做完整 Subconverter / ACL4SSR `.ini` 兼容  
 - 单档案，配置为本地 JSON  
 - 订阅结果有短时缓存  
-- OpenWrt 为预编译二进制安装（非完整 SDK 源码包）  
+- OpenWrt 提供预编译 x86_64 `.ipk`（非完整 SDK 源码包）  
 
 ## 许可证
 

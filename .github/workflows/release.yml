@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-ipk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools build-essential cmake perl pkg-config
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Build x86_64 ipk
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CC_x86_64_unknown_linux_musl: musl-gcc
+        run: |
+          chmod +x openwrt/build-ipk.sh
+          ./openwrt/build-ipk.sh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.ipk
+            dist/SHA256SUMS
+          generate_release_notes: true
+          body: |
+            ## 安装（OpenWrt / ImmortalWrt x86_64）
+
+            ```bash
+            opkg install omni-acl4ssr-agent_*_x86_64.ipk
+            ```
+
+            - LuCI：服务 → 订阅转换
+            - 控制台：`http://路由器IP:8787/`
+            - Nikki 订阅：`http://127.0.0.1:8787/sub`
+
+            仅提供 **x86_64** 预编译包。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

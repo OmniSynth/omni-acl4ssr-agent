@@ -15,6 +15,9 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::http::{header, HeaderValue, Request};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
@@ -120,6 +123,7 @@ async fn main() -> anyhow::Result<()> {
         let static_files =
             ServeDir::new(web_dir).not_found_service(ServeFile::new(index));
         app.fallback_service(static_files)
+            .layer(middleware::from_fn(static_cache_headers))
     } else {
         info!("未找到 web/dist，仅提供 API（开发时可另起 Vite）");
         app
@@ -162,4 +166,22 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// index.html 禁止长期缓存（LuCI iframe 否则会一直显示旧前端）；带 hash 的 /assets/* 可长期缓存。
+async fn static_cache_headers(req: Request<axum::body::Body>, next: Next) -> Response {
+    let path = req.uri().path().to_owned();
+    let mut res = next.run(req).await;
+    if path == "/" || path.ends_with(".html") {
+        res.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+        );
+    } else if path.starts_with("/assets/") {
+        res.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    }
+    res
 }

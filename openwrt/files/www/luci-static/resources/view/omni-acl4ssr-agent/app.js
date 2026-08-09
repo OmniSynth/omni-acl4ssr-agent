@@ -147,8 +147,13 @@ return view.extend({
 				'}'
 			].join('\n'));
 
+			/* 每次进入页面带时间戳，避免浏览器把旧 index.html / JS 缓存进 iframe */
+			function consoleSrc() {
+				return base + '/?_=' + Date.now();
+			}
+
 			const frame = E('iframe', {
-				src: base + '/',
+				src: consoleSrc(),
 				title: _('omni-acl4ssr-agent 控制台'),
 				class: 'omni-acl4ssr-agent-frame'
 			});
@@ -161,7 +166,7 @@ return view.extend({
 
 			refreshLink.addEventListener('click', function (ev) {
 				ev.preventDefault();
-				frame.src = base + '/?_=' + Date.now();
+				frame.src = consoleSrc();
 			});
 
 			const consoleSection = E('div', { class: 'cbi-section omni-acl4ssr-agent-console' }, [

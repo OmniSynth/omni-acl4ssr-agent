@@ -51,11 +51,17 @@ fi
 if [ -f /etc/config/irez_acl4ssr ] && [ ! -f /etc/config/omni_acl4ssr_agent ]; then
   sed 's/irez_acl4ssr/omni_acl4ssr_agent/g' /etc/config/irez_acl4ssr > /etc/config/omni_acl4ssr_agent
 fi
-# 停用旧服务，避免双开抢端口
+# 停用并移除旧品牌 irez-acl4ssr，避免仍打开旧控制台
 if [ -x /etc/init.d/irez-acl4ssr ]; then
   /etc/init.d/irez-acl4ssr stop 2>/dev/null || true
   /etc/init.d/irez-acl4ssr disable 2>/dev/null || true
 fi
+rm -f /usr/bin/irez-acl4ssr \
+  /etc/init.d/irez-acl4ssr \
+  /usr/share/luci/menu.d/luci-app-irez-acl4ssr.json \
+  /usr/share/rpcd/acl.d/luci-app-irez-acl4ssr.json 2>/dev/null || true
+rm -rf /usr/share/irez-acl4ssr \
+  /www/luci-static/resources/view/irez-acl4ssr 2>/dev/null || true
 # 已有配置不覆盖，避免冲掉用户订阅与落地代理
 if [ ! -f /etc/omni-acl4ssr-agent/config.json ]; then
   cp -f seed-config.json /etc/omni-acl4ssr-agent/config.json
