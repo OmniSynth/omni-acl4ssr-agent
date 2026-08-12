@@ -112,6 +112,7 @@ export interface ConvertResponse {
   regions?: RegionStat[];
   unmatched_count?: number;
   unmatched_samples?: string[];
+  fetch_warnings?: string[];
 }
 
 export type AiProvider = "gemini" | "deepseek" | string;

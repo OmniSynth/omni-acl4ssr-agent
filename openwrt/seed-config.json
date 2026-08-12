@@ -148,7 +148,17 @@
       "name": "⛓ 链路",
       "group_type": "select",
       "filter": "",
-      "proxies": ["🇭🇰 香港"],
+      "proxies": [
+        "🇭🇰 香港",
+        "🇹🇼 台湾",
+        "🇯🇵 日本",
+        "🇸🇬 新加坡",
+        "🇰🇷 韩国",
+        "🇺🇸 美国",
+        "🇨🇦 加拿大",
+        "🇮🇳 印度",
+        "🇦🇺 澳大利亚"
+      ],
       "url": "https://www.gstatic.com/generate_204",
       "interval": 300,
       "tolerance": 50,

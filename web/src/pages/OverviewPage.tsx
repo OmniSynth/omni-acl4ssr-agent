@@ -196,8 +196,8 @@ export default function OverviewPage() {
           {sub}
         </code>
         <p className="mt-2 text-xs text-fg-soft">
-          多订阅聚合后由此地址输出；Nikki 填本机 http://127.0.0.1:8787/sub 即可。右上角「更新
-          Nikki」可拉取并 reload，无需再去 LuCI。
+          多订阅聚合后由此地址输出；Nikki 填本机 http://127.0.0.1:8787/sub 即可。右上角「更新订阅」
+          会拉取并重载 Nikki 使配置生效。
         </p>
       </Card>
     </div>

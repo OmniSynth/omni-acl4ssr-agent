@@ -221,7 +221,7 @@ pub struct NikkiUpdateBody {
     /// 指定 uci section；空则优先更新指向本机 /sub 的订阅
     #[serde(default)]
     pub section_id: Option<String>,
-    /// 下载后是否 `/etc/init.d/nikki reload`（默认 true）
+    /// 下载后是否 `/etc/init.d/nikki reload`（默认 true，使新订阅立即生效）
     #[serde(default = "default_true_bool")]
     pub reload: bool,
 }
@@ -230,13 +230,42 @@ fn default_true_bool() -> bool {
     true
 }
 
-/// 调用本机 Nikki 更新订阅并重载，使局域网分流等规则立即生效。
+/// 更新本机 Nikki 订阅并默认重载。
+/// 重载时临时 prefer=local，避免 start 在网络窗口里再次远程拉取。
 pub async fn post_nikki_update_subscription(
+    State(state): State<Arc<AppState>>,
     Json(body): Json<NikkiUpdateBody>,
 ) -> Json<NikkiUpdateResult> {
-    Json(
-        nikki::update_subscriptions(body.section_id.as_deref(), body.reload).await,
-    )
+    // 先预热 /sub，避免 Nikki curl 时撞上冷转换 + 上游超时拿到不完整 YAML
+    let data = state.store.get().await;
+    if data.profile.enabled && !data.profile.urls().is_empty() {
+        let extras = state.world.extras().await;
+        match engine::convert(&data, &state.http, &extras).await {
+            Ok(result) => {
+                let key = engine::config_cache_key(&data, &extras);
+                state
+                    .cache
+                    .set_full(
+                        key,
+                        result.yaml,
+                        result.proxy_count,
+                        result.fetch_warnings.len(),
+                    )
+                    .await;
+                if !result.fetch_warnings.is_empty() {
+                    tracing::warn!(
+                        warnings = ?result.fetch_warnings,
+                        proxies = result.proxy_count,
+                        "预热 /sub 时部分上游失败"
+                    );
+                }
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "预热 /sub 失败，仍尝试更新 Nikki");
+            }
+        }
+    }
+    Json(nikki::update_subscriptions(body.section_id.as_deref(), body.reload).await)
 }
 
 pub async fn put_config(
@@ -260,11 +289,19 @@ pub async fn convert(
     match engine::convert(&data, &state.http, &extras).await {
         Ok(result) => {
             let key = engine::config_cache_key(&data, &extras);
-            state.cache.set(key, result.yaml.clone()).await;
+            state
+                .cache
+                .set_full(
+                    key,
+                    result.yaml.clone(),
+                    result.proxy_count,
+                    result.fetch_warnings.len(),
+                )
+                .await;
             let unmatched_samples: Vec<String> =
                 result.unmatched.iter().take(12).cloned().collect();
             let unmatched_count = result.unmatched.len();
-            let message = if matches!(result.groups_mode, crate::model::GroupsMode::Managed) {
+            let mut message = if matches!(result.groups_mode, crate::model::GroupsMode::Managed) {
                 format!(
                     "转换成功（托管）：节点 {} / 组 {} / 规则 {}；识别 {} 个地区，未匹配 {}（补充国家库 {}）",
                     result.proxy_count,
@@ -277,6 +314,12 @@ pub async fn convert(
             } else {
                 "转换成功".into()
             };
+            if !result.fetch_warnings.is_empty() {
+                message.push_str(&format!(
+                    "；警告：{} 个上游未完整拉取",
+                    result.fetch_warnings.len()
+                ));
+            }
             Ok(Json(ConvertResponse {
                 ok: true,
                 proxy_count: result.proxy_count,
@@ -292,6 +335,7 @@ pub async fn convert(
                 regions: result.regions,
                 unmatched_count,
                 unmatched_samples,
+                fetch_warnings: result.fetch_warnings,
             }))
         }
         Err(err) => Ok(Json(ConvertResponse {
@@ -305,6 +349,7 @@ pub async fn convert(
             regions: vec![],
             unmatched_count: 0,
             unmatched_samples: vec![],
+            fetch_warnings: vec![],
         })),
     }
 }
@@ -325,7 +370,15 @@ pub async fn subscription(State(state): State<Arc<AppState>>) -> ApiResult<Respo
         let result = engine::convert(&data, &state.http, &extras)
             .await
             .map_err(ApiError::internal)?;
-        state.cache.set(key, result.yaml.clone()).await;
+        state
+            .cache
+            .set_full(
+                key,
+                result.yaml.clone(),
+                result.proxy_count,
+                result.fetch_warnings.len(),
+            )
+            .await;
         result.yaml
     };
 

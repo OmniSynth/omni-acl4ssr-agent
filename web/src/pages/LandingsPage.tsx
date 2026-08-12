@@ -84,7 +84,7 @@ export default function LandingsPage() {
     >
       <p className="mb-4 text-xs text-fg-soft">
         可直接追加独立 SOCKS5/HTTP（无需前置）。若填写「前置代理」，则先走该策略组再连落地（链式）。
-        节点会加入「⛓ 链路」与「🚀 默认」供选择。新增后请保存。
+        节点会加入「⛓ 链路」与「🚀 默认」供选择；链路内可选全部地区策略组。新增后请保存。
       </p>
       {error ? (
         <div className="mb-3">

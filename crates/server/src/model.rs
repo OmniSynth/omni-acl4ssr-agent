@@ -296,7 +296,7 @@ impl AppStateData {
                             "🇭🇰 香港".into(),
                         ],
                     ),
-                    select_group("g-chain", "⛓ 链路", vec!["🇭🇰 香港".into()]),
+                    select_group("g-chain", "⛓ 链路", country_names.clone()),
                     {
                         let mut def = country_names;
                         def.push("DIRECT".into());
@@ -377,6 +377,8 @@ pub struct ConvertResponse {
     pub unmatched_count: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmatched_samples: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fetch_warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

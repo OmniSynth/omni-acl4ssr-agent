@@ -21,6 +21,8 @@ struct CacheEntry {
     key: String,
     yaml: String,
     at: Instant,
+    proxy_count: usize,
+    fetch_warnings: usize,
 }
 
 impl YamlCache {
@@ -34,11 +36,34 @@ impl YamlCache {
         }
     }
 
-    pub async fn set(&self, key: String, yaml: String) {
-        *self.inner.write().await = Some(CacheEntry {
+    pub async fn set_full(
+        &self,
+        key: String,
+        yaml: String,
+        proxy_count: usize,
+        fetch_warnings: usize,
+    ) {
+        let mut guard = self.inner.write().await;
+        if let Some(old) = guard.as_ref() {
+            if old.key == key
+                && fetch_warnings > 0
+                && old.fetch_warnings == 0
+                && old.proxy_count > proxy_count
+            {
+                warn!(
+                    old = old.proxy_count,
+                    new = proxy_count,
+                    "保留更完整的订阅缓存，跳过不完整转换结果"
+                );
+                return;
+            }
+        }
+        *guard = Some(CacheEntry {
             key,
             yaml,
             at: Instant::now(),
+            proxy_count,
+            fetch_warnings,
         });
     }
 
@@ -55,6 +80,8 @@ pub struct ConvertResult {
     pub groups_mode: GroupsMode,
     pub regions: Vec<RegionStat>,
     pub unmatched: Vec<String>,
+    /// 部分上游拉取/解析失败时的说明（仍可能有其它源的节点）
+    pub fetch_warnings: Vec<String>,
 }
 
 pub async fn convert(
@@ -67,21 +94,51 @@ pub async fn convert(
         bail!("未配置上游订阅 URL");
     }
 
+    let ua = data.profile.user_agent.clone();
+    // 并行拉取，缩短多订阅等待；单源失败不拖垮整次转换
+    let mut tasks = Vec::with_capacity(urls.len());
+    for (idx, url) in urls.iter().cloned().enumerate() {
+        let http = http.clone();
+        let ua = ua.clone();
+        tasks.push(async move {
+            let result = fetch_upstream_resilient(&http, &url, &ua).await;
+            (idx, url, result)
+        });
+    }
+    let fetched = futures_util::future::join_all(tasks).await;
+
     let mut root_meta = Value::Mapping(serde_yaml::Mapping::new());
     let mut all_proxies = Vec::new();
     let mut seen_names = HashSet::new();
     let mut fetch_errors = Vec::new();
+    let mut meta_set = false;
 
-    for (idx, url) in urls.iter().enumerate() {
-        match fetch_upstream(http, url, &data.profile.user_agent).await {
+    let mut ordered = fetched;
+    ordered.sort_by_key(|(idx, _, _)| *idx);
+
+    for (idx, url, result) in ordered {
+        match result {
             Ok(upstream) => {
-                let mut root: Value = serde_yaml::from_str(&upstream)
-                    .with_context(|| format!("订阅 #{} 不是合法 YAML", idx + 1))?;
-                if idx == 0 {
+                let mut root: Value = match serde_yaml::from_str(&upstream) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        warn!(url = %url, error = %err, "上游不是合法 YAML");
+                        fetch_errors.push(format!("#{} {}: 不是合法 YAML ({err})", idx + 1, url));
+                        continue;
+                    }
+                };
+                if !meta_set {
                     root_meta = root.clone();
+                    meta_set = true;
                 }
-                let proxies = extract_proxies(&mut root)
-                    .with_context(|| format!("订阅 #{} 缺少 proxies", idx + 1))?;
+                let proxies = match extract_proxies(&mut root) {
+                    Ok(p) => p,
+                    Err(err) => {
+                        warn!(url = %url, error = %err, "上游缺少 proxies");
+                        fetch_errors.push(format!("#{} {}: {err}", idx + 1, url));
+                        continue;
+                    }
+                };
                 let mut added = 0usize;
                 for p in proxies {
                     let name = p
@@ -102,7 +159,7 @@ pub async fn convert(
             }
             Err(err) => {
                 warn!(url = %url, error = %err, "拉取上游失败");
-                fetch_errors.push(format!("#{} {}: {}", idx + 1, url, err));
+                fetch_errors.push(format!("#{} {}: {err}", idx + 1, url));
             }
         }
     }
@@ -112,6 +169,14 @@ pub async fn convert(
             bail!("所有上游均无可用节点");
         }
         bail!("拉取上游失败: {}", fetch_errors.join(" | "));
+    }
+
+    if !fetch_errors.is_empty() {
+        warn!(
+            ok = all_proxies.len(),
+            failed = fetch_errors.len(),
+            "部分上游失败，输出为不完整聚合"
+        );
     }
 
     let root = root_meta;
@@ -237,6 +302,7 @@ pub async fn convert(
         groups_mode: data.groups_mode,
         regions,
         unmatched,
+        fetch_warnings: fetch_errors,
     })
 }
 
@@ -281,11 +347,42 @@ pub fn config_cache_key(data: &AppStateData, region_extras: &[RegionEntry]) -> S
     hex::encode(hasher.finalize())
 }
 
+/// 带重试；reqwest 失败时回退系统 curl（OpenWrt 上 TUN/证书场景更稳）。
+async fn fetch_upstream_resilient(http: &reqwest::Client, url: &str, ua: &str) -> Result<String> {
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 1..=3u8 {
+        match fetch_upstream(http, url, ua).await {
+            Ok(text) => return Ok(text),
+            Err(err) => {
+                warn!(url = %url, attempt, error = %err, "reqwest 拉取失败");
+                last_err = Some(err);
+            }
+        }
+        match fetch_upstream_curl(url, ua).await {
+            Ok(text) => {
+                info!(url = %url, attempt, "curl 回退拉取成功");
+                return Ok(text);
+            }
+            Err(err) => {
+                warn!(url = %url, attempt, error = %err, "curl 回退失败");
+                last_err = Some(err);
+            }
+        }
+        if attempt < 3 {
+            tokio::time::sleep(Duration::from_millis(400 * u64::from(attempt))).await;
+        }
+    }
+    match last_err {
+        Some(err) => Err(err),
+        None => bail!("拉取上游订阅失败"),
+    }
+}
+
 async fn fetch_upstream(http: &reqwest::Client, url: &str, ua: &str) -> Result<String> {
     let resp = http
         .get(url)
         .header("User-Agent", ua)
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(45))
         .send()
         .await
         .context("拉取上游订阅失败")?;
@@ -293,7 +390,42 @@ async fn fetch_upstream(http: &reqwest::Client, url: &str, ua: &str) -> Result<S
         bail!("上游订阅 HTTP {}", resp.status());
     }
     let bytes = resp.bytes().await.context("读取上游订阅正文失败")?;
-    let text = String::from_utf8_lossy(&bytes).to_string();
+    decode_subscription_body(&bytes)
+}
+
+async fn fetch_upstream_curl(url: &str, ua: &str) -> Result<String> {
+    use tokio::process::Command;
+    let output = tokio::time::timeout(
+        Duration::from_secs(50),
+        Command::new("curl")
+            .args([
+                "-fsSL",
+                "--connect-timeout",
+                "15",
+                "--max-time",
+                "45",
+                "-A",
+                ua,
+                url,
+            ])
+            .output(),
+    )
+    .await
+    .context("curl 拉取超时")?
+    .context("执行 curl 失败")?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "curl 退出码 {} {}",
+            output.status.code().unwrap_or(-1),
+            err.trim()
+        );
+    }
+    decode_subscription_body(&output.stdout)
+}
+
+fn decode_subscription_body(bytes: &[u8]) -> Result<String> {
+    let text = String::from_utf8_lossy(bytes).to_string();
     if looks_like_yaml(&text) {
         return Ok(text);
     }
@@ -304,6 +436,9 @@ async fn fetch_upstream(http: &reqwest::Client, url: &str, ua: &str) -> Result<S
         if looks_like_yaml(&decoded_text) {
             return Ok(decoded_text);
         }
+    }
+    if text.trim().is_empty() {
+        bail!("上游正文为空");
     }
     Ok(text)
 }
@@ -383,6 +518,10 @@ fn landing_to_value(landing: &crate::model::LandingProxy) -> Value {
 
 fn build_rules(data: &AppStateData, default_group: &str) -> Vec<String> {
     let mut rules = Vec::new();
+    // 上游订阅域名直连，避免路由器 TUN 把转换进程自己的拉取绕进代理导致超时/缺节点
+    for host in upstream_hosts(data) {
+        rules.push(format!("DOMAIN,{host},DIRECT"));
+    }
     // 局域网源 IP 规则置顶，整机覆盖后续域名规则
     for route in data.lan_routes.iter().filter(|r| r.enabled) {
         let target = route.target.trim();
@@ -440,6 +579,42 @@ fn normalize_src_cidr(raw: &str) -> Option<String> {
         return Some(format!("{s}/32"));
     }
     None
+}
+
+fn upstream_hosts(data: &AppStateData) -> Vec<String> {
+    let mut hosts = Vec::new();
+    let mut seen = HashSet::new();
+    for url in data.profile.urls() {
+        let Some(host) = url_host(&url) else {
+            continue;
+        };
+        if seen.insert(host.clone()) {
+            hosts.push(host);
+        }
+    }
+    hosts
+}
+
+fn url_host(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let authority = rest.split('/').next()?.split('?').next()?;
+    let authority = authority.rsplit('@').next()?;
+    let host = if let Some(end) = authority.strip_prefix('[').and_then(|_| authority.find(']')) {
+        &authority[1..end]
+    } else {
+        match authority.rsplit_once(':') {
+            Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
+            _ => authority,
+        }
+    };
+    let host = host.trim();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
 }
 
 fn copy_if_present(root: &Value, out: &mut serde_yaml::Mapping, key: &str) {

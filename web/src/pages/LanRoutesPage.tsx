@@ -142,7 +142,7 @@ export default function LanRoutesPage() {
     try {
       const saved = await api.putLanRoutes(routes);
       setRoutes(saved);
-      tips.success("局域网分流已保存；可点右上角「更新 Nikki」生效");
+      tips.success("局域网分流已保存；可点右上角「更新订阅」拉取并重载生效");
     } catch (e) {
       setError(String((e as Error).message || e));
     } finally {
@@ -169,7 +169,7 @@ export default function LanRoutesPage() {
     >
       <p className="mb-4 text-xs text-fg-soft">
         从 OpenWrt DHCP 列表选择设备（主机名 · IP · MAC），并可为规则设置备注。保存后会以{" "}
-        <code>SRC-IP-CIDR</code> 写在订阅规则最前；生效请点右上角「更新 Nikki」。不会出现在左侧「规则集」页。
+        <code>SRC-IP-CIDR</code> 写在订阅规则最前；生效请点右上角「更新订阅」。不会出现在左侧「规则集」页。
         也可选「自定义」填写 CIDR（如 <code>172.16.1.0/24</code>）。
       </p>
       {error ? (

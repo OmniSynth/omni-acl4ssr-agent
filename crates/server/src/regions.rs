@@ -195,7 +195,6 @@ fn builtin_entries() -> Vec<RegionEntry> {
 const PREF_AI: &[&str] = &["us", "jp", "sg", "hk", "tw", "kr", "gb", "de"];
 const PREF_BINANCE: &[&str] = &["hk", "sg", "jp", "us", "tw"];
 const PREF_NETFLIX: &[&str] = &["sg", "jp", "tw", "us", "hk", "kr"];
-const PREF_CHAIN: &[&str] = &["hk", "sg", "jp", "tw", "us"];
 
 pub const NAME_DEFAULT: &str = "🚀 默认";
 pub const NAME_OTHER: &str = "🌐 其他";
@@ -423,11 +422,8 @@ pub fn build_managed_groups(
         groups.push(out);
     }
 
-    let mut chain = pick(PREF_CHAIN, &available, &region_names);
-    if chain.len() > 3 {
-        chain.truncate(3);
-    }
-    groups.push(select("g-chain", NAME_CHAIN, chain));
+    // 链路：可选全部地区策略组（落地 SOCKS/HTTP 由 engine 注入队首）
+    groups.push(select("g-chain", NAME_CHAIN, region_names.clone()));
 
     let mut default_proxies = region_names;
     default_proxies.push("DIRECT".into());
@@ -467,6 +463,12 @@ mod tests {
         assert!(plan.groups.iter().any(|g| g.name == NAME_DEFAULT));
         assert!(plan.groups.iter().any(|g| g.name == "🇭🇰 香港"));
         assert!(!plan.groups.iter().any(|g| g.name == "🇹🇼 台湾"));
+        let chain = plan.groups.iter().find(|g| g.id == "g-chain").unwrap();
+        // 链路应包含全部已识别地区组（此处 hk/us/jp + 其他）
+        assert!(chain.proxies.iter().any(|p| p.contains("香港")));
+        assert!(chain.proxies.iter().any(|p| p.contains("美国")));
+        assert!(chain.proxies.iter().any(|p| p.contains("日本")));
+        assert!(chain.proxies.iter().any(|p| p == "🌐 其他"));
         let ai = plan.groups.iter().find(|g| g.id == "g-ai").unwrap();
         assert!(ai.proxies.iter().any(|p| p.contains("美国")));
         assert!(ai.proxies.iter().any(|p| p.contains("日本")));

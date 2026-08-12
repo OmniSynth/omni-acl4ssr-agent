@@ -125,7 +125,7 @@ opkg install omni-acl4ssr-agent_1.0.0_x86_64.ipk
 | HTTPS（语音） | `https://路由器IP:8788/` |
 | Nikki 订阅 | `http://127.0.0.1:8787/sub` |
 
-顶栏提供 **打开面板**（Nikki UI）与 **更新 Nikki**（拉取订阅并 reload）。
+顶栏提供 **打开面板**（Nikki UI）与 **更新订阅**（拉取订阅并重载）。
 
 ## Nikki 接入
 
@@ -133,7 +133,7 @@ opkg install omni-acl4ssr-agent_1.0.0_x86_64.ipk
 2. 调整策略组 / 规则集 / 局域网分流 / 落地代理  
 3. 「立即转换」确认成功  
 4. Nikki 订阅 URL 填 `http://127.0.0.1:8787/sub`（本机）或路由器局域网地址  
-5. 点顶栏「更新 Nikki」生效  
+5. 点顶栏「更新订阅」拉取并重载生效  
 
 ## API（节选）
 
@@ -146,7 +146,7 @@ opkg install omni-acl4ssr-agent_1.0.0_x86_64.ipk
 | GET/PUT | `/api/landings` | 落地代理 |
 | GET/PUT | `/api/lan-routes` | 局域网分流 |
 | GET | `/api/dhcp-clients` | OpenWrt DHCP 列表 |
-| POST | `/api/nikki/update-subscription` | 更新并重载 Nikki |
+| POST | `/api/nikki/update-subscription` | 更新 Nikki 订阅并重载 |
 | POST | `/api/convert` | 立即转换 |
 | GET | `/sub` | Nikki 订阅 YAML |
 

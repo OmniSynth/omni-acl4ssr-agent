@@ -1,4 +1,6 @@
 //! 调用本机 Nikki（luci-app-nikki）更新订阅并重载。
+//!
+//! 重载前临时将订阅 `prefer` 设为 local，避免 start 在 prefer=remote 时再次远程拉取。
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -170,7 +172,10 @@ fn unquote(raw: &str) -> String {
     }
 }
 
-/// 更新指定（或全部）Nikki 订阅，并默认 reload 使运行配置生效。
+/// 更新指定（或全部）Nikki 订阅；`reload=true` 时重载使新订阅生效。
+///
+/// 重载前会把已更新段的 `prefer` 临时改为 `local`，避免 Nikki start 在
+/// `prefer=remote` 时再次拉取（cleanup 后网络窗口内容易拉挂 / 拿到残缺订阅）。
 pub async fn update_subscriptions(
     section_id: Option<&str>,
     reload: bool,
@@ -237,6 +242,7 @@ pub async fn update_subscriptions(
 
     let mut reloaded = false;
     if reload {
+        let prefer_backup = pin_prefer_local(&ok_ids).await;
         match reload_nikki().await {
             Ok(()) => {
                 reloaded = true;
@@ -247,6 +253,7 @@ pub async fn update_subscriptions(
                 errors.push(format!("reload: {e}"));
             }
         }
+        restore_prefer(&prefer_backup).await;
     }
 
     let mut message = format!("已更新 Nikki 订阅 {}", ok_ids.join(", "));
@@ -254,6 +261,8 @@ pub async fn update_subscriptions(
         message.push_str("，并已重载生效");
     } else if reload {
         message.push_str("（下载成功，但重载失败）");
+    } else {
+        message.push_str("（仅下载，未重载）");
     }
     if !errors.is_empty() {
         message.push_str("；部分问题：");
@@ -308,7 +317,33 @@ async fn update_one(section_id: &str) -> Result<(), String> {
 }
 
 async fn reload_nikki() -> Result<(), String> {
-    run_cmd("/etc/init.d/nikki", &["reload"], Duration::from_secs(60)).await
+    // cleanup + start + test_profile 在路由上可能超过 60s
+    run_cmd("/etc/init.d/nikki", &["reload"], Duration::from_secs(180)).await
+}
+
+/// 重载前把 prefer 钉成 local，返回 `(section_id, 原 prefer)` 以便恢复。
+async fn pin_prefer_local(section_ids: &[String]) -> Vec<(String, String)> {
+    let mut backup = Vec::new();
+    for id in section_ids {
+        let key = format!("nikki.{id}.prefer");
+        let prev = uci_get(&key).await.unwrap_or_else(|| "remote".into());
+        backup.push((id.clone(), prev));
+        let _ = run_cmd("uci", &["set", &format!("{key}=local")], Duration::from_secs(5)).await;
+    }
+    let _ = run_cmd("uci", &["commit", "nikki"], Duration::from_secs(5)).await;
+    backup
+}
+
+async fn restore_prefer(backup: &[(String, String)]) {
+    for (id, prev) in backup {
+        let _ = run_cmd(
+            "uci",
+            &["set", &format!("nikki.{id}.prefer={prev}")],
+            Duration::from_secs(5),
+        )
+        .await;
+    }
+    let _ = run_cmd("uci", &["commit", "nikki"], Duration::from_secs(5)).await;
 }
 
 async fn run_cmd(prog: &str, args: &[&str], limit: Duration) -> Result<(), String> {
