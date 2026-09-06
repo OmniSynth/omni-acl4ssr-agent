@@ -298,9 +298,7 @@ impl AppStateData {
                     ),
                     select_group("g-chain", "⛓ 链路", country_names.clone()),
                     {
-                        let mut def = country_names;
-                        def.push("DIRECT".into());
-                        select_group("g-default", NAME_DEFAULT, def)
+                        select_group("g-default", NAME_DEFAULT, country_names)
                     },
                 ]);
                 groups
@@ -316,12 +314,6 @@ impl AppStateData {
                         "DOMAIN-SUFFIX,chatgpt.com",
                         "DOMAIN-SUFFIX,anthropic.com",
                         "DOMAIN-SUFFIX,claude.ai",
-                        "DOMAIN-SUFFIX,cursor.sh",
-                        "DOMAIN-SUFFIX,cursor.com",
-                        "DOMAIN-KEYWORD,gemini",
-                        "DOMAIN-SUFFIX,googleapis.com",
-                        "DOMAIN-SUFFIX,deepseek.com",
-                        "DOMAIN-SUFFIX,api.deepseek.com",
                         "GEOSITE,openai",
                     ]
                     .join("\n"),

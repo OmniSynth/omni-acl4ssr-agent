@@ -13,7 +13,7 @@ use crate::ai::{
     self, prepare_ops, preview_ops, AiAttachment, AiOp, AiStore, AiUsagePublic,
 };
 use crate::countries::WorldCatalog;
-use crate::engine;
+use crate::engine::{self, UpstreamCache};
 use crate::model::AppStateData;
 use crate::regions::is_user_strategy_group;
 
@@ -677,7 +677,7 @@ async fn tool_convert_diag(
     world: &WorldCatalog,
 ) -> Value {
     let extras = world.extras().await;
-    match engine::convert(data, http, &extras).await {
+    match engine::convert(data, http, &extras, &UpstreamCache::default()).await {
         Ok(r) => json!({
             "ok": true,
             "proxy_count": r.proxy_count,

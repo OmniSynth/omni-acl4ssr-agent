@@ -425,8 +425,7 @@ pub fn build_managed_groups(
     // 链路：可选全部地区策略组（落地 SOCKS/HTTP 由 engine 注入队首）
     groups.push(select("g-chain", NAME_CHAIN, region_names.clone()));
 
-    let mut default_proxies = region_names;
-    default_proxies.push("DIRECT".into());
+    let default_proxies = region_names;
     groups.push(select("g-default", NAME_DEFAULT, default_proxies));
 
     Ok(ManagedPlan {

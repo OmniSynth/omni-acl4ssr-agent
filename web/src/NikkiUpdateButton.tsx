@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "./api";
+import { dispatchConvertInfo } from "./configReload";
 import { useTips } from "./tips";
 
 /** 顶栏：更新本机 Nikki 订阅并重载 */
@@ -13,6 +14,15 @@ export function NikkiUpdateButton() {
     try {
       const r = await api.updateNikkiSubscription({ reload: true });
       if (!r.ok) throw new Error(r.message || "更新订阅失败");
+      if (r.proxy_count != null && r.group_count != null && r.rule_count != null) {
+        dispatchConvertInfo({
+          proxy_count: r.proxy_count,
+          group_count: r.group_count,
+          rule_count: r.rule_count,
+          region_count: r.region_count,
+          unmatched_count: r.unmatched_count,
+        });
+      }
       tips.success(r.message || "Nikki 订阅已更新并重载");
     } catch (e) {
       tips.error(String((e as Error).message || e));

@@ -2,8 +2,20 @@
 
 export const CONFIG_RELOAD_EVENT = "omni:config-reload";
 
+export const CONVERT_INFO_EVENT = "omni:convert-info";
+
 export function requestConfigReload() {
   window.dispatchEvent(new Event(CONFIG_RELOAD_EVENT));
+}
+
+export function dispatchConvertInfo(detail: {
+  proxy_count: number;
+  group_count: number;
+  rule_count: number;
+  region_count?: number;
+  unmatched_count?: number;
+}) {
+  window.dispatchEvent(new CustomEvent(CONVERT_INFO_EVENT, { detail }));
 }
 
 export function pathForAiOps(ops: { op: string }[]): string {

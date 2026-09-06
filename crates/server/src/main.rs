@@ -29,7 +29,7 @@ use crate::ai::AiStore;
 use crate::ai_chats::ChatStore;
 use crate::api::AppState;
 use crate::countries::WorldCatalog;
-use crate::engine::YamlCache;
+use crate::engine::{UpstreamCache, YamlCache};
 use crate::store::Store;
 
 #[tokio::main]
@@ -65,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
         store,
         http,
         cache: YamlCache::default(),
+        upstream_cache: UpstreamCache::default(),
         world,
         ai,
         chats,

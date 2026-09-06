@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,12 +17,55 @@ pub struct YamlCache {
     inner: Arc<RwLock<Option<CacheEntry>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SubCacheMeta {
+    pub proxy_count: usize,
+    pub group_count: usize,
+    pub rule_count: usize,
+    pub region_count: usize,
+    pub unmatched_count: usize,
+    pub fetch_warnings: usize,
+    pub groups_mode: GroupsMode,
+}
+
+impl SubCacheMeta {
+    pub fn from_convert(result: &ConvertResult) -> Self {
+        Self {
+            proxy_count: result.proxy_count,
+            group_count: result.group_count,
+            rule_count: result.rule_count,
+            region_count: result.regions.iter().filter(|r| r.id != "other").count(),
+            unmatched_count: result.unmatched.len(),
+            fetch_warnings: result.fetch_warnings.len(),
+            groups_mode: result.groups_mode,
+        }
+    }
+
+    /// 订阅内容摘要（不含「转换成功」字样，供「更新订阅」等场景使用）
+    pub fn subscription_summary(&self) -> String {
+        if self.groups_mode == GroupsMode::Managed {
+            format!(
+                "{} 节点 / {} 组 / {} 规则（{} 地区，{} 未匹配）",
+                self.proxy_count,
+                self.group_count,
+                self.rule_count,
+                self.region_count,
+                self.unmatched_count
+            )
+        } else {
+            format!(
+                "{} 节点 / {} 组 / {} 规则",
+                self.proxy_count, self.group_count, self.rule_count
+            )
+        }
+    }
+}
+
 struct CacheEntry {
     key: String,
     yaml: String,
     at: Instant,
-    proxy_count: usize,
-    fetch_warnings: usize,
+    meta: SubCacheMeta,
 }
 
 impl YamlCache {
@@ -36,23 +79,28 @@ impl YamlCache {
         }
     }
 
-    pub async fn set_full(
-        &self,
-        key: String,
-        yaml: String,
-        proxy_count: usize,
-        fetch_warnings: usize,
-    ) {
+    /// 按 key 取缓存（忽略 TTL）。用于上游偶发失败时仍输出上次完整订阅。
+    pub async fn get_by_key(&self, key: &str) -> Option<String> {
+        let guard = self.inner.read().await;
+        let entry = guard.as_ref()?;
+        if entry.key == key {
+            Some(entry.yaml.clone())
+        } else {
+            None
+        }
+    }
+
+    pub async fn set_full(&self, key: String, yaml: String, meta: SubCacheMeta) {
         let mut guard = self.inner.write().await;
         if let Some(old) = guard.as_ref() {
             if old.key == key
-                && fetch_warnings > 0
-                && old.fetch_warnings == 0
-                && old.proxy_count > proxy_count
+                && meta.fetch_warnings > 0
+                && old.meta.fetch_warnings == 0
+                && old.meta.proxy_count > meta.proxy_count
             {
                 warn!(
-                    old = old.proxy_count,
-                    new = proxy_count,
+                    old = old.meta.proxy_count,
+                    new = meta.proxy_count,
                     "保留更完整的订阅缓存，跳过不完整转换结果"
                 );
                 return;
@@ -62,14 +110,89 @@ impl YamlCache {
             key,
             yaml,
             at: Instant::now(),
-            proxy_count,
-            fetch_warnings,
+            meta,
         });
+    }
+
+    pub async fn meta_for_key(&self, key: &str) -> Option<SubCacheMeta> {
+        let guard = self.inner.read().await;
+        let entry = guard.as_ref()?;
+        if entry.key == key {
+            Some(entry.meta.clone())
+        } else {
+            None
+        }
     }
 
     pub async fn clear(&self) {
         *self.inner.write().await = None;
     }
+}
+
+/// 上游订阅正文缓存（按 URL）。配置变更时仍会用新规则重算，但可跳过重复下载。
+#[derive(Clone, Default)]
+pub struct UpstreamCache {
+    inner: Arc<RwLock<HashMap<String, UpstreamEntry>>>,
+}
+
+struct UpstreamEntry {
+    body: String,
+    at: Instant,
+}
+
+impl UpstreamCache {
+    pub async fn get(&self, url: &str, ttl: Duration) -> Option<String> {
+        let guard = self.inner.read().await;
+        let entry = guard.get(url)?;
+        if entry.at.elapsed() < ttl {
+            Some(entry.body.clone())
+        } else {
+            None
+        }
+    }
+
+    pub async fn set(&self, url: String, body: String) {
+        self.inner
+            .write()
+            .await
+            .insert(url, UpstreamEntry { body, at: Instant::now() });
+    }
+}
+
+/// `/sub` 与「更新订阅」共用：输出缓存未过期则直接返回，否则转换（上游可走 URL 缓存）。
+pub async fn ensure_sub_yaml(
+    data: &AppStateData,
+    http: &reqwest::Client,
+    cache: &YamlCache,
+    upstream_cache: &UpstreamCache,
+    region_extras: &[RegionEntry],
+    fresh_ttl: Duration,
+) -> Result<(String, SubCacheMeta)> {
+    let key = config_cache_key(data, region_extras);
+    if let Some(yaml) = cache.get(&key, fresh_ttl).await {
+        let meta = cache
+            .meta_for_key(&key)
+            .await
+            .unwrap_or_else(|| SubCacheMeta {
+                proxy_count: 0,
+                group_count: 0,
+                rule_count: 0,
+                region_count: 0,
+                unmatched_count: 0,
+                fetch_warnings: 0,
+                groups_mode: data.groups_mode,
+            });
+        return Ok((yaml, meta));
+    }
+    let result = convert(data, http, region_extras, upstream_cache).await?;
+    let meta = SubCacheMeta::from_convert(&result);
+    cache
+        .set_full(key.clone(), result.yaml.clone(), meta.clone())
+        .await;
+    Ok((
+        cache.get_by_key(&key).await.unwrap_or(result.yaml),
+        cache.meta_for_key(&key).await.unwrap_or(meta),
+    ))
 }
 
 pub struct ConvertResult {
@@ -88,6 +211,7 @@ pub async fn convert(
     data: &AppStateData,
     http: &reqwest::Client,
     region_extras: &[RegionEntry],
+    upstream_cache: &UpstreamCache,
 ) -> Result<ConvertResult> {
     let urls = data.profile.urls();
     if urls.is_empty() {
@@ -100,8 +224,9 @@ pub async fn convert(
     for (idx, url) in urls.iter().cloned().enumerate() {
         let http = http.clone();
         let ua = ua.clone();
+        let upstream_cache = upstream_cache.clone();
         tasks.push(async move {
-            let result = fetch_upstream_resilient(&http, &url, &ua).await;
+            let result = fetch_upstream_resilient(&http, &url, &ua, &upstream_cache).await;
             (idx, url, result)
         });
     }
@@ -348,11 +473,24 @@ pub fn config_cache_key(data: &AppStateData, region_extras: &[RegionEntry]) -> S
 }
 
 /// 带重试；reqwest 失败时回退系统 curl（OpenWrt 上 TUN/证书场景更稳）。
-async fn fetch_upstream_resilient(http: &reqwest::Client, url: &str, ua: &str) -> Result<String> {
+async fn fetch_upstream_resilient(
+    http: &reqwest::Client,
+    url: &str,
+    ua: &str,
+    upstream_cache: &UpstreamCache,
+) -> Result<String> {
+    const UPSTREAM_TTL: Duration = Duration::from_secs(600);
+    if let Some(cached) = upstream_cache.get(url, UPSTREAM_TTL).await {
+        return Ok(cached);
+    }
+
     let mut last_err: Option<anyhow::Error> = None;
-    for attempt in 1..=3u8 {
+    for attempt in 1..=2u8 {
         match fetch_upstream(http, url, ua).await {
-            Ok(text) => return Ok(text),
+            Ok(text) => {
+                upstream_cache.set(url.to_string(), text.clone()).await;
+                return Ok(text);
+            }
             Err(err) => {
                 warn!(url = %url, attempt, error = %err, "reqwest 拉取失败");
                 last_err = Some(err);
@@ -361,6 +499,7 @@ async fn fetch_upstream_resilient(http: &reqwest::Client, url: &str, ua: &str) -
         match fetch_upstream_curl(url, ua).await {
             Ok(text) => {
                 info!(url = %url, attempt, "curl 回退拉取成功");
+                upstream_cache.set(url.to_string(), text.clone()).await;
                 return Ok(text);
             }
             Err(err) => {
@@ -368,8 +507,8 @@ async fn fetch_upstream_resilient(http: &reqwest::Client, url: &str, ua: &str) -
                 last_err = Some(err);
             }
         }
-        if attempt < 3 {
-            tokio::time::sleep(Duration::from_millis(400 * u64::from(attempt))).await;
+        if attempt < 2 {
+            tokio::time::sleep(Duration::from_millis(300)).await;
         }
     }
     match last_err {
@@ -522,6 +661,8 @@ fn build_rules(data: &AppStateData, default_group: &str) -> Vec<String> {
     for host in upstream_hosts(data) {
         rules.push(format!("DOMAIN,{host},DIRECT"));
     }
+    // 私网 / 链路本地：避免内网访问被 MATCH 打进代理
+    rules.extend(private_direct_rules());
     // 局域网源 IP 规则置顶，整机覆盖后续域名规则
     for route in data.lan_routes.iter().filter(|r| r.enabled) {
         let target = route.target.trim();
@@ -547,17 +688,38 @@ fn build_rules(data: &AppStateData, default_group: &str) -> Vec<String> {
                 && !parts[0].eq_ignore_ascii_case("OR")
                 && !parts[0].eq_ignore_ascii_case("NOT")
             {
-                // DOMAIN-SUFFIX,x,GROUP or GEOIP,CN,DIRECT
                 rules.push(line.to_string());
             } else {
                 rules.push(format!("{},{}", line, rs.group));
             }
         }
     }
-    rules.push("GEOIP,CN,DIRECT".into());
+    // ACL4SSR 风格收尾：先域名/geo 分流，再 IP；国外走默认组，国内直连
+    rules.push("DOMAIN-SUFFIX,cn,DIRECT".into());
+    rules.push(format!("GEOSITE,geolocation-!cn,{default_group}"));
+    rules.push(format!("GEOSITE,gfw,{default_group}"));
     rules.push("GEOSITE,CN,DIRECT".into());
+    rules.push("GEOIP,CN,DIRECT,no-resolve".into());
     rules.push(format!("MATCH,{default_group}"));
     rules
+}
+
+/// 私网 / 组播 / 链路本地地址直连（TUN 下避免访问路由器、NAS 等走代理）
+fn private_direct_rules() -> Vec<String> {
+    [
+        "GEOSITE,private,DIRECT",
+        "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
+        "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
+        "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
+        "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
+        "IP-CIDR,169.254.0.0/16,DIRECT,no-resolve",
+        "IP-CIDR,224.0.0.0/4,DIRECT,no-resolve",
+        "IP-CIDR6,fc00::/7,DIRECT,no-resolve",
+        "IP-CIDR6,fe80::/10,DIRECT,no-resolve",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 /// 将 IP 或 CIDR 规范为 Clash SRC-IP-CIDR 可用形式
@@ -623,5 +785,65 @@ fn copy_if_present(root: &Value, out: &mut serde_yaml::Mapping, key: &str) {
         if let Some(v) = map.get(&k) {
             out.insert(k, v.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod rule_tests {
+    use super::*;
+    use crate::model::{Profile, RuleSet};
+
+    fn sample_data() -> AppStateData {
+        AppStateData {
+            profile: Profile {
+                name: "t".into(),
+                upstream_url: String::new(),
+                upstream_urls: vec!["https://sub.example.com/list".into()],
+                default_group: NAME_DEFAULT.into(),
+                enabled: true,
+                user_agent: "clash".into(),
+            },
+            groups_mode: GroupsMode::Managed,
+            groups: vec![],
+            rulesets: vec![RuleSet {
+                id: "r-ai".into(),
+                name: "AI".into(),
+                group: "🤖 AI".into(),
+                enabled: true,
+                rules: "DOMAIN-SUFFIX,openai.com".into(),
+            }],
+            landings: vec![],
+            lan_routes: vec![],
+        }
+    }
+
+    #[test]
+    fn rules_follow_acl4ssr_tail_order() {
+        let rules = build_rules(&sample_data(), NAME_DEFAULT);
+        let service = rules.iter().position(|r| r.contains("openai.com")).unwrap();
+        let priv_lan = rules.iter().position(|r| r.starts_with("IP-CIDR,192.168")).unwrap();
+        let geo_not_cn = rules
+            .iter()
+            .position(|r| r.contains("geolocation-!cn"))
+            .unwrap();
+        let gfw = rules.iter().position(|r| r.starts_with("GEOSITE,gfw,")).unwrap();
+        let geo_cn = rules.iter().position(|r| r == "GEOSITE,CN,DIRECT").unwrap();
+        let geoip = rules
+            .iter()
+            .position(|r| r == "GEOIP,CN,DIRECT,no-resolve")
+            .unwrap();
+        assert!(priv_lan < service);
+        assert!(service < geo_not_cn);
+        assert!(geo_not_cn < gfw);
+        assert!(gfw < geo_cn);
+        assert!(geo_cn < geoip);
+        assert_eq!(rules.last().unwrap(), &format!("MATCH,{NAME_DEFAULT}"));
+    }
+
+    #[test]
+    fn rules_include_private_direct() {
+        let rules = build_rules(&sample_data(), NAME_DEFAULT);
+        assert!(rules.iter().any(|r| r == "GEOSITE,private,DIRECT"));
+        assert!(rules.iter().any(|r| r == "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve"));
     }
 }

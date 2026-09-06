@@ -178,8 +178,7 @@
         "🇺🇸 美国",
         "🇨🇦 加拿大",
         "🇮🇳 印度",
-        "🇦🇺 澳大利亚",
-        "DIRECT"
+        "🇦🇺 澳大利亚"
       ],
       "url": "https://www.gstatic.com/generate_204",
       "interval": 300,
@@ -192,7 +191,7 @@
       "id": "r-ai",
       "name": "AI",
       "group": "🤖 AI",
-      "rules": "DOMAIN-SUFFIX,openai.com\nDOMAIN-SUFFIX,chatgpt.com\nDOMAIN-SUFFIX,anthropic.com\nDOMAIN-SUFFIX,claude.ai\nDOMAIN-SUFFIX,cursor.sh\nDOMAIN-SUFFIX,cursor.com\nDOMAIN-KEYWORD,gemini\nDOMAIN-SUFFIX,googleapis.com\nDOMAIN-SUFFIX,deepseek.com\nDOMAIN-SUFFIX,api.deepseek.com\nGEOSITE,openai",
+      "rules": "DOMAIN-SUFFIX,openai.com\nDOMAIN-SUFFIX,chatgpt.com\nDOMAIN-SUFFIX,anthropic.com\nDOMAIN-SUFFIX,claude.ai\nGEOSITE,openai",
       "enabled": true
     },
     {

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, subscriptionUrl } from "../api";
-import { CONFIG_RELOAD_EVENT } from "../configReload";
+import { CONFIG_RELOAD_EVENT, CONVERT_INFO_EVENT } from "../configReload";
 import { useTips } from "../tips";
-import { normalizeProfile, type GroupsMode, type Profile } from "../types";
+import { normalizeProfile, type ConvertResponse, type GroupsMode, type Profile } from "../types";
 import { Button, Card, Input, Label, Msg, Select } from "../components/ui";
 
 export default function OverviewPage() {
@@ -10,6 +10,7 @@ export default function OverviewPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [groupsMode, setGroupsMode] = useState<GroupsMode>("managed");
   const [groupNames, setGroupNames] = useState<string[]>([]);
+  const [convertInfo, setConvertInfo] = useState<ConvertResponse | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [converting, setConverting] = useState(false);
@@ -28,8 +29,34 @@ export default function OverviewPage() {
     };
     load();
     window.addEventListener(CONFIG_RELOAD_EVENT, load);
-    return () => window.removeEventListener(CONFIG_RELOAD_EVENT, load);
-  }, []);
+    const onConvertInfo = (ev: Event) => {
+      const detail = (ev as CustomEvent<{
+        proxy_count: number;
+        group_count: number;
+        rule_count: number;
+        region_count?: number;
+        unmatched_count?: number;
+      }>).detail;
+      if (!detail) return;
+      setConvertInfo({
+        ok: true,
+        proxy_count: detail.proxy_count,
+        group_count: detail.group_count,
+        rule_count: detail.rule_count,
+        message: "",
+        groups_mode: groupsMode,
+        region_count: detail.region_count,
+        regions: [],
+        unmatched_count: detail.unmatched_count ?? 0,
+        unmatched_samples: [],
+      });
+    };
+    window.addEventListener(CONVERT_INFO_EVENT, onConvertInfo);
+    return () => {
+      window.removeEventListener(CONFIG_RELOAD_EVENT, load);
+      window.removeEventListener(CONVERT_INFO_EVENT, onConvertInfo);
+    };
+  }, [groupsMode]);
 
   async function save() {
     if (!profile) return;
@@ -58,8 +85,9 @@ export default function OverviewPage() {
     setError("");
     try {
       const r = await api.convert(false);
+      setConvertInfo(r);
       if (!r.ok) throw new Error(r.message);
-      tips.success(`转换成功：节点 ${r.proxy_count} / 组 ${r.group_count} / 规则 ${r.rule_count}`);
+      tips.success(r.message);
     } catch (e) {
       setError(String((e as Error).message || e));
     } finally {
@@ -101,7 +129,7 @@ export default function OverviewPage() {
         actions={
           <div className="flex gap-2">
             <Button variant="ghost" onClick={convertNow} disabled={converting}>
-              {converting ? "转换中…" : "立即转换"}
+              {converting ? "预览中…" : "预览转换"}
             </Button>
             <Button onClick={save} disabled={saving}>
               {saving ? "保存中…" : "保存"}
@@ -184,6 +212,49 @@ export default function OverviewPage() {
         ) : null}
       </Card>
 
+      {convertInfo?.ok ? (
+        <Card title="最近转换结果">
+          <p className="text-sm text-fg-soft">
+            共 {convertInfo.proxy_count} 个节点 → {convertInfo.group_count} 个策略组 →{" "}
+            {convertInfo.rule_count} 条规则。
+            {groupsMode === "managed" && convertInfo.region_count != null
+              ? ` 识别 ${convertInfo.region_count} 个地区。`
+              : null}
+            {groupsMode === "managed"
+              ? " 托管模式下节点按地区归入 url-test 组（如 🇭🇰 香港），在 zashboard 需展开对应地区组才能看到全部节点。"
+              : null}
+          </p>
+          {(convertInfo.fetch_warnings?.length ?? 0) > 0 ? (
+            <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              <p className="font-medium">部分上游拉取失败（/sub 会优先使用上次完整缓存）</p>
+              <ul className="mt-1 list-inside list-disc text-fg-soft">
+                {convertInfo.fetch_warnings!.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {(convertInfo.regions?.length ?? 0) > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {convertInfo.regions!.map((r) => (
+                <span
+                  key={r.id}
+                  className="rounded-lg border border-edge bg-composer px-2 py-1 text-xs text-fg-soft"
+                >
+                  {r.name} · {r.count}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {(convertInfo.unmatched_count ?? 0) > 0 ? (
+            <p className="mt-2 text-xs text-faint">
+              未匹配地区 {convertInfo.unmatched_count}：{" "}
+              {(convertInfo.unmatched_samples ?? []).join("、")}
+            </p>
+          ) : null}
+        </Card>
+      ) : null}
+
       <Card
         title="Nikki 订阅地址"
         actions={
@@ -197,7 +268,7 @@ export default function OverviewPage() {
         </code>
         <p className="mt-2 text-xs text-fg-soft">
           多订阅聚合后由此地址输出；Nikki 填本机 http://127.0.0.1:8787/sub 即可。右上角「更新订阅」
-          会拉取并重载 Nikki 使配置生效。
+          会写入 Nikki 并重载生效；「预览转换」仅查看节点统计，不会更新 Nikki。
         </p>
       </Card>
     </div>

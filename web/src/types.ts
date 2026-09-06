@@ -75,6 +75,11 @@ export interface NikkiUpdateResult {
   message: string;
   section_ids: string[];
   reloaded: boolean;
+  proxy_count?: number;
+  group_count?: number;
+  rule_count?: number;
+  region_count?: number;
+  unmatched_count?: number;
 }
 
 export interface NikkiPanelInfo {
@@ -110,6 +115,7 @@ export interface ConvertResponse {
   message: string;
   groups_mode?: GroupsMode | string;
   regions?: RegionStat[];
+  region_count?: number;
   unmatched_count?: number;
   unmatched_samples?: string[];
   fetch_warnings?: string[];

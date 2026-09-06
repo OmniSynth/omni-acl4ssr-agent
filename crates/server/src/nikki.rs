@@ -27,6 +27,37 @@ pub struct NikkiUpdateResult {
     pub message: String,
     pub section_ids: Vec<String>,
     pub reloaded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unmatched_count: Option<usize>,
+}
+
+impl NikkiUpdateResult {
+    fn without_stats(
+        ok: bool,
+        message: impl Into<String>,
+        section_ids: Vec<String>,
+        reloaded: bool,
+    ) -> Self {
+        Self {
+            ok,
+            message: message.into(),
+            section_ids,
+            reloaded,
+            proxy_count: None,
+            group_count: None,
+            rule_count: None,
+            region_count: None,
+            unmatched_count: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -174,32 +205,32 @@ fn unquote(raw: &str) -> String {
 
 /// 更新指定（或全部）Nikki 订阅；`reload=true` 时重载使新订阅生效。
 ///
-/// 重载前会把已更新段的 `prefer` 临时改为 `local`，避免 Nikki start 在
-/// `prefer=remote` 时再次拉取（cleanup 后网络窗口内容易拉挂 / 拿到残缺订阅）。
+/// `sub_yaml`：已转换好的订阅正文；对指向本机 `/sub` 的段可直写文件，跳过 ubus/curl。
 pub async fn update_subscriptions(
     section_id: Option<&str>,
     reload: bool,
+    sub_yaml: Option<String>,
 ) -> NikkiUpdateResult {
     let subs = list_subscriptions().await;
     if subs.is_empty() {
-        return NikkiUpdateResult {
-            ok: false,
-            message: "未检测到 Nikki 订阅（uci nikki 无 subscription 段）".into(),
-            section_ids: vec![],
-            reloaded: false,
-        };
+        return NikkiUpdateResult::without_stats(
+            false,
+            "未检测到 Nikki 订阅（uci nikki 无 subscription 段）",
+            vec![],
+            false,
+        );
     }
 
     let targets: Vec<NikkiSubscription> = if let Some(id) = section_id.map(str::trim).filter(|s| !s.is_empty())
     {
         let found: Vec<_> = subs.into_iter().filter(|s| s.section_id == id).collect();
         if found.is_empty() {
-            return NikkiUpdateResult {
-                ok: false,
-                message: format!("找不到 Nikki 订阅段：{id}"),
-                section_ids: vec![],
-                reloaded: false,
-            };
+            return NikkiUpdateResult::without_stats(
+                false,
+                format!("找不到 Nikki 订阅段：{id}"),
+                vec![],
+                false,
+            );
         }
         found
     } else {
@@ -216,10 +247,25 @@ pub async fn update_subscriptions(
         }
     };
 
+    let prefer_backup = if reload {
+        Some(pin_prefer_local(&targets.iter().map(|s| s.section_id.clone()).collect::<Vec<_>>()).await)
+    } else {
+        None
+    };
+
     let mut ok_ids = Vec::new();
     let mut errors = Vec::new();
     for s in &targets {
-        match update_one(&s.section_id).await {
+        let result = if is_local_sub_url(&s.url) {
+            if let Some(yaml) = sub_yaml.as_deref() {
+                install_local_subscription(&s.section_id, yaml).await
+            } else {
+                update_one(&s.section_id).await
+            }
+        } else {
+            update_one(&s.section_id).await
+        };
+        match result {
             Ok(()) => {
                 info!(section = %s.section_id, "Nikki 订阅已更新");
                 ok_ids.push(s.section_id.clone());
@@ -232,17 +278,19 @@ pub async fn update_subscriptions(
     }
 
     if ok_ids.is_empty() {
-        return NikkiUpdateResult {
-            ok: false,
-            message: format!("更新失败：{}", errors.join("; ")),
-            section_ids: vec![],
-            reloaded: false,
-        };
+        if let Some(backup) = prefer_backup {
+            restore_prefer(&backup).await;
+        }
+        return NikkiUpdateResult::without_stats(
+            false,
+            format!("更新失败：{}", errors.join("; ")),
+            vec![],
+            false,
+        );
     }
 
     let mut reloaded = false;
     if reload {
-        let prefer_backup = pin_prefer_local(&ok_ids).await;
         match reload_nikki().await {
             Ok(()) => {
                 reloaded = true;
@@ -253,7 +301,9 @@ pub async fn update_subscriptions(
                 errors.push(format!("reload: {e}"));
             }
         }
-        restore_prefer(&prefer_backup).await;
+    }
+    if let Some(backup) = prefer_backup {
+        restore_prefer(&backup).await;
     }
 
     let mut message = format!("已更新 Nikki 订阅 {}", ok_ids.join(", "));
@@ -274,7 +324,51 @@ pub async fn update_subscriptions(
         message,
         section_ids: ok_ids,
         reloaded,
+        proxy_count: None,
+        group_count: None,
+        rule_count: None,
+        region_count: None,
+        unmatched_count: None,
     }
+}
+
+fn is_local_sub_url(url: &str) -> bool {
+    url.contains(":8787/sub") || url.contains("127.0.0.1:8787")
+}
+
+/// 将已转换 YAML 写入 Nikki 订阅目录（等同 update_subscription 成功路径，无 HTTP 回环）。
+async fn install_local_subscription(section_id: &str, yaml: &str) -> Result<(), String> {
+    if !yaml.contains("proxies:") && !yaml.contains("proxy-providers:") {
+        return Err("订阅 YAML 缺少 proxies".into());
+    }
+    let path = format!("/etc/nikki/subscriptions/{section_id}.yaml");
+    tokio::fs::write(&path, yaml)
+        .await
+        .map_err(|e| format!("写入 {path} 失败：{e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = tokio::fs::metadata(&path).await {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o600);
+            let _ = tokio::fs::set_permissions(&path, perms).await;
+        }
+    }
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    run_cmd(
+        "uci",
+        &["set", &format!("nikki.{section_id}.update={stamp}")],
+        Duration::from_secs(5),
+    )
+    .await?;
+    run_cmd(
+        "uci",
+        &["set", &format!("nikki.{section_id}.success=1")],
+        Duration::from_secs(5),
+    )
+    .await?;
+    run_cmd("uci", &["commit", "nikki"], Duration::from_secs(5)).await?;
+    Ok(())
 }
 
 async fn update_one(section_id: &str) -> Result<(), String> {

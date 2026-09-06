@@ -18,7 +18,7 @@ use crate::ai_agent;
 use crate::ai_chats::ChatStore;
 use crate::countries::WorldCatalog;
 use crate::dhcp::{self, DhcpClient};
-use crate::engine::{self, YamlCache};
+use crate::engine::{self, UpstreamCache, YamlCache};
 use crate::nikki::{self, NikkiPanelInfo, NikkiSubscription, NikkiUpdateResult};
 use crate::model::{
     AppStateData, ConvertRequest, ConvertResponse, GroupsModeBody, LandingProxy, LanRoute, Profile,
@@ -31,6 +31,7 @@ pub struct AppState {
     pub store: Store,
     pub http: reqwest::Client,
     pub cache: YamlCache,
+    pub upstream_cache: UpstreamCache,
     pub world: Arc<WorldCatalog>,
     pub ai: AiStore,
     pub chats: ChatStore,
@@ -230,42 +231,66 @@ fn default_true_bool() -> bool {
     true
 }
 
-/// 更新本机 Nikki 订阅并默认重载。
-/// 重载时临时 prefer=local，避免 start 在网络窗口里再次远程拉取。
+fn nikki_update_message(result: &NikkiUpdateResult, meta: &engine::SubCacheMeta) -> String {
+    let stats = meta.subscription_summary();
+    let action = if result.reloaded {
+        "Nikki 已更新并重载"
+    } else if result.section_ids.is_empty() {
+        "Nikki 更新失败"
+    } else {
+        "Nikki 已更新（未重载）"
+    };
+    let mut message = format!("{action} · {stats}");
+    if meta.fetch_warnings > 0 {
+        message.push_str(&format!("；{} 个上游未完整拉取", meta.fetch_warnings));
+    }
+    message
+}
+
+/// 更新本机 Nikki 订阅并默认重载（优先缓存 / 直写订阅文件，避免 ubus 二次 curl）。
 pub async fn post_nikki_update_subscription(
     State(state): State<Arc<AppState>>,
     Json(body): Json<NikkiUpdateBody>,
 ) -> Json<NikkiUpdateResult> {
-    // 先预热 /sub，避免 Nikki curl 时撞上冷转换 + 上游超时拿到不完整 YAML
     let data = state.store.get().await;
-    if data.profile.enabled && !data.profile.urls().is_empty() {
+    let (sub_yaml, sub_meta) = if data.profile.enabled && !data.profile.urls().is_empty() {
         let extras = state.world.extras().await;
-        match engine::convert(&data, &state.http, &extras).await {
-            Ok(result) => {
-                let key = engine::config_cache_key(&data, &extras);
-                state
-                    .cache
-                    .set_full(
-                        key,
-                        result.yaml,
-                        result.proxy_count,
-                        result.fetch_warnings.len(),
-                    )
-                    .await;
-                if !result.fetch_warnings.is_empty() {
-                    tracing::warn!(
-                        warnings = ?result.fetch_warnings,
-                        proxies = result.proxy_count,
-                        "预热 /sub 时部分上游失败"
-                    );
-                }
-            }
+        match engine::ensure_sub_yaml(
+            &data,
+            &state.http,
+            &state.cache,
+            &state.upstream_cache,
+            &extras,
+            Duration::from_secs(300),
+        )
+        .await
+        {
+            Ok((yaml, meta)) => (Some(yaml), Some(meta)),
             Err(err) => {
                 tracing::warn!(error = %err, "预热 /sub 失败，仍尝试更新 Nikki");
+                (None, None)
             }
         }
+    } else {
+        (None, None)
+    };
+    let mut result = nikki::update_subscriptions(
+        body.section_id.as_deref(),
+        body.reload,
+        sub_yaml,
+    )
+    .await;
+    if result.ok {
+        if let Some(meta) = sub_meta {
+            result.message = nikki_update_message(&result, &meta);
+            result.proxy_count = Some(meta.proxy_count);
+            result.group_count = Some(meta.group_count);
+            result.rule_count = Some(meta.rule_count);
+            result.region_count = Some(meta.region_count);
+            result.unmatched_count = Some(meta.unmatched_count);
+        }
     }
-    Json(nikki::update_subscriptions(body.section_id.as_deref(), body.reload).await)
+    Json(result)
 }
 
 pub async fn put_config(
@@ -286,17 +311,12 @@ pub async fn convert(
         return Err(ApiError::bad("档案已禁用"));
     }
     let extras = state.world.extras().await;
-    match engine::convert(&data, &state.http, &extras).await {
+    match engine::convert(&data, &state.http, &extras, &state.upstream_cache).await {
         Ok(result) => {
             let key = engine::config_cache_key(&data, &extras);
             state
                 .cache
-                .set_full(
-                    key,
-                    result.yaml.clone(),
-                    result.proxy_count,
-                    result.fetch_warnings.len(),
-                )
+                .set_full(key, result.yaml.clone(), engine::SubCacheMeta::from_convert(&result))
                 .await;
             let unmatched_samples: Vec<String> =
                 result.unmatched.iter().take(12).cloned().collect();
@@ -363,24 +383,16 @@ pub async fn subscription(State(state): State<Arc<AppState>>) -> ApiResult<Respo
         return Err(ApiError::bad("未配置上游订阅 URL"));
     }
     let extras = state.world.extras().await;
-    let key = engine::config_cache_key(&data, &extras);
-    let yaml = if let Some(cached) = state.cache.get(&key, Duration::from_secs(60)).await {
-        cached
-    } else {
-        let result = engine::convert(&data, &state.http, &extras)
-            .await
-            .map_err(ApiError::internal)?;
-        state
-            .cache
-            .set_full(
-                key,
-                result.yaml.clone(),
-                result.proxy_count,
-                result.fetch_warnings.len(),
-            )
-            .await;
-        result.yaml
-    };
+    let (yaml, _) = engine::ensure_sub_yaml(
+        &data,
+        &state.http,
+        &state.cache,
+        &state.upstream_cache,
+        &extras,
+        Duration::from_secs(300),
+    )
+    .await
+    .map_err(ApiError::internal)?;
 
     Ok((
         StatusCode::OK,
