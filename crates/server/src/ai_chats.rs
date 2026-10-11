@@ -393,7 +393,9 @@ impl ChatStore {
         if let Some(n) = total_tokens {
             chat.last_total_tokens = n;
         } else if prompt_tokens.is_some() || output_tokens.is_some() {
-            chat.last_total_tokens = prompt_tokens.unwrap_or(0).saturating_add(output_tokens.unwrap_or(0));
+            chat.last_total_tokens = prompt_tokens
+                .unwrap_or(0)
+                .saturating_add(output_tokens.unwrap_or(0));
         }
         if context_limit > 0 {
             chat.context_limit = context_limit;
@@ -510,9 +512,7 @@ fn last_tokens_from_messages(messages: &[ChatMessage]) -> (u64, u64, u64) {
         }
         let lp = m.prompt_tokens.unwrap_or(0);
         let lo = m.output_tokens.unwrap_or(0);
-        let lt = m
-            .total_tokens
-            .unwrap_or_else(|| lp.saturating_add(lo));
+        let lt = m.total_tokens.unwrap_or_else(|| lp.saturating_add(lo));
         if lp == 0 && lo == 0 && lt == 0 {
             continue;
         }

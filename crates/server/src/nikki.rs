@@ -87,7 +87,9 @@ pub async fn panel_info() -> NikkiPanelInfo {
     let ui_path = uci_get("nikki.mixin.ui_path")
         .await
         .unwrap_or_else(|| "ui".into());
-    let secret = uci_get("nikki.mixin.api_secret").await.filter(|s| !s.is_empty());
+    let secret = uci_get("nikki.mixin.api_secret")
+        .await
+        .filter(|s| !s.is_empty());
 
     let port = listen
         .rsplit_once(':')
@@ -221,34 +223,42 @@ pub async fn update_subscriptions(
         );
     }
 
-    let targets: Vec<NikkiSubscription> = if let Some(id) = section_id.map(str::trim).filter(|s| !s.is_empty())
-    {
-        let found: Vec<_> = subs.into_iter().filter(|s| s.section_id == id).collect();
-        if found.is_empty() {
-            return NikkiUpdateResult::without_stats(
-                false,
-                format!("找不到 Nikki 订阅段：{id}"),
-                vec![],
-                false,
-            );
-        }
-        found
-    } else {
-        // 优先更新指向本机 /sub 的订阅；否则全部更新
-        let local: Vec<_> = subs
-            .iter()
-            .filter(|s| s.url.contains(":8787/sub") || s.url.contains("127.0.0.1:8787"))
-            .cloned()
-            .collect();
-        if local.is_empty() {
-            subs
+    let targets: Vec<NikkiSubscription> =
+        if let Some(id) = section_id.map(str::trim).filter(|s| !s.is_empty()) {
+            let found: Vec<_> = subs.into_iter().filter(|s| s.section_id == id).collect();
+            if found.is_empty() {
+                return NikkiUpdateResult::without_stats(
+                    false,
+                    format!("找不到 Nikki 订阅段：{id}"),
+                    vec![],
+                    false,
+                );
+            }
+            found
         } else {
-            local
-        }
-    };
+            // 优先更新指向本机 /sub 的订阅；否则全部更新
+            let local: Vec<_> = subs
+                .iter()
+                .filter(|s| s.url.contains(":8787/sub") || s.url.contains("127.0.0.1:8787"))
+                .cloned()
+                .collect();
+            if local.is_empty() {
+                subs
+            } else {
+                local
+            }
+        };
 
     let prefer_backup = if reload {
-        Some(pin_prefer_local(&targets.iter().map(|s| s.section_id.clone()).collect::<Vec<_>>()).await)
+        Some(
+            pin_prefer_local(
+                &targets
+                    .iter()
+                    .map(|s| s.section_id.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .await,
+        )
     } else {
         None
     };
@@ -391,9 +401,8 @@ async fn update_one(section_id: &str) -> Result<(), String> {
             err.trim().to_string()
         });
     }
-    let resp: UbusUpdateResp = serde_json::from_slice(&output.stdout).unwrap_or(UbusUpdateResp {
-        success: false,
-    });
+    let resp: UbusUpdateResp =
+        serde_json::from_slice(&output.stdout).unwrap_or(UbusUpdateResp { success: false });
     if !resp.success {
         // 回退：直接调 init.d（与 luci.nikki 内部一致）
         let ok = run_cmd(
@@ -422,7 +431,12 @@ async fn pin_prefer_local(section_ids: &[String]) -> Vec<(String, String)> {
         let key = format!("nikki.{id}.prefer");
         let prev = uci_get(&key).await.unwrap_or_else(|| "remote".into());
         backup.push((id.clone(), prev));
-        let _ = run_cmd("uci", &["set", &format!("{key}=local")], Duration::from_secs(5)).await;
+        let _ = run_cmd(
+            "uci",
+            &["set", &format!("{key}=local")],
+            Duration::from_secs(5),
+        )
+        .await;
     }
     let _ = run_cmd("uci", &["commit", "nikki"], Duration::from_secs(5)).await;
     backup

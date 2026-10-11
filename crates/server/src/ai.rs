@@ -1,5 +1,5 @@
-//! AI 配置助手：自然语言 → 结构化 ops → 预览/应用。
-//! 支持供应商：Google Gemini、DeepSeek（OpenAI 兼容 API）。
+//! AI 配置助手：模型列表、用量、语音转写，以及 ops 规范化与应用。
+//! 方案生成在 `ai_agent`。供应商：Google Gemini、DeepSeek（OpenAI 兼容 API）。
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -14,8 +14,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::model::{
-    AppStateData, GroupType, GroupsMode, LandingProxy, LandingType, LanRoute, ProxyGroup,
-    RuleSet,
+    AppStateData, GroupType, GroupsMode, LanRoute, LandingProxy, LandingType, ProxyGroup, RuleSet,
 };
 use crate::regions::is_user_strategy_group;
 
@@ -86,15 +85,8 @@ fn model_fits_provider(provider: &str, model: &str) -> bool {
 }
 
 /// 设置里可选的上下文档位（0 = 自动）。
-pub const CONTEXT_WINDOW_CHOICES: &[u64] = &[
-    0,
-    32_768,
-    65_536,
-    131_072,
-    262_144,
-    524_288,
-    1_048_576,
-];
+pub const CONTEXT_WINDOW_CHOICES: &[u64] =
+    &[0, 32_768, 65_536, 131_072, 262_144, 524_288, 1_048_576];
 
 impl Default for AiSettings {
     fn default() -> Self {
@@ -249,11 +241,7 @@ impl AiStore {
     pub async fn usage_public(&self) -> AiUsagePublic {
         let provider = self.effective_provider().await;
         let file = self.usage.read().await;
-        let mut u = file
-            .providers
-            .get(&provider)
-            .cloned()
-            .unwrap_or_default();
+        let mut u = file.providers.get(&provider).cloned().unwrap_or_default();
         roll_usage_day(&mut u);
         to_usage_public(&provider, &u)
     }
@@ -274,8 +262,7 @@ impl AiStore {
                 Err(e) => {
                     warn!(error = %e, "拉取 DeepSeek 余额失败，沿用本机累计用量");
                     if usage.quota_note.contains("本机今日累计") {
-                        usage.quota_note =
-                            format!("本轮 token 来自接口；余额拉取失败：{e}");
+                        usage.quota_note = format!("本轮 token 来自接口；余额拉取失败：{e}");
                     }
                 }
             }
@@ -318,7 +305,9 @@ impl AiStore {
         let u = file.providers.entry(provider.clone()).or_default();
         roll_usage_day(u);
         u.requests_today = u.requests_today.saturating_add(1);
-        u.tokens_today = u.tokens_today.saturating_add(total_tokens.max(prompt_tokens + output_tokens));
+        u.tokens_today = u
+            .tokens_today
+            .saturating_add(total_tokens.max(prompt_tokens + output_tokens));
         u.last_prompt_tokens = prompt_tokens;
         u.last_output_tokens = output_tokens;
         u.last_total_tokens = if total_tokens > 0 {
@@ -339,14 +328,12 @@ impl AiStore {
             };
             let cost = estimate_deepseek_cost_cny(model, hit, miss, output_tokens);
             u.deepseek_token_cost_cny = (u.deepseek_token_cost_cny + cost).max(0.0);
-            u.deepseek_spent_cny = u
-                .deepseek_spent_cny
-                .max(u.deepseek_token_cost_cny)
-                .max(0.0);
+            u.deepseek_spent_cny = u.deepseek_spent_cny.max(u.deepseek_token_cost_cny).max(0.0);
         }
         // 成功调用后清除该模型的额度耗尽标记
         if !u.quota_blocked_model.is_empty()
-            && (u.quota_blocked_model == model || model_matches_block(&u.quota_blocked_model, model))
+            && (u.quota_blocked_model == model
+                || model_matches_block(&u.quota_blocked_model, model))
         {
             u.quota_blocked_until = 0;
             u.quota_blocked_model.clear();
@@ -829,9 +816,8 @@ fn apply_deepseek_balance(
                 );
             }
         } else if !usage.quota_exhausted {
-            usage.quota_note = format!(
-                "DeepSeek 已消费 {spent_s} / 总额 {total_s}（充值余额 {topped_s}）"
-            );
+            usage.quota_note =
+                format!("DeepSeek 已消费 {spent_s} / 总额 {total_s}（充值余额 {topped_s}）");
         }
     } else if !bal.is_available {
         usage.quota_exhausted = true;
@@ -933,27 +919,6 @@ pub struct AiOp {
     pub dialer_proxy: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiPlan {
-    #[serde(default)]
-    pub summary: String,
-    #[serde(default)]
-    pub ops: Vec<AiOp>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AiPlanResponse {
-    pub summary: String,
-    pub ops: Vec<AiOp>,
-    pub preview: Vec<String>,
-    pub usage: AiUsagePublic,
-    /// 模型原始 JSON 文本（供对话历史持久化）
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub raw: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_id: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 struct GeminiResponse {
     candidates: Option<Vec<GeminiCandidate>>,
@@ -1052,7 +1017,9 @@ pub async fn transcribe_with_gemini(
     data_base64: &str,
 ) -> Result<AiTranscribeResponse> {
     if api_key.trim().is_empty() {
-        bail!("未配置 Gemini API Key。请到 https://aistudio.google.com/apikey 免费创建后填入设置。");
+        bail!(
+            "未配置 Gemini API Key。请到 https://aistudio.google.com/apikey 免费创建后填入设置。"
+        );
     }
     let mime = normalize_mime(mime_type);
     if !audio_mime_allowed(&mime) {
@@ -1113,12 +1080,11 @@ pub async fn transcribe_with_gemini(
 
     let status = resp.status();
     let raw = resp.bytes().await.context("读取 Gemini 转写响应失败")?;
-    let parsed: GeminiResponse =
-        serde_json::from_slice(&raw).unwrap_or(GeminiResponse {
-            candidates: None,
-            error: None,
-            usage_metadata: None,
-        });
+    let parsed: GeminiResponse = serde_json::from_slice(&raw).unwrap_or(GeminiResponse {
+        candidates: None,
+        error: None,
+        usage_metadata: None,
+    });
 
     if !status.is_success() {
         let msg = parsed
@@ -1220,413 +1186,9 @@ pub(crate) fn validate_attachments(
     Ok(out)
 }
 
-/// `history`：既有多轮 `(role, text)`，role 为 `user` / `model`（不含本轮用户输入）。
-pub async fn plan_with_gemini(
-    http: &reqwest::Client,
-    api_key: &str,
-    model: &str,
-    data: &AppStateData,
-    user_prompt: &str,
-    store: &AiStore,
-    context_limit: u64,
-    history: &[(String, String)],
-    attachments: &[AiAttachment],
-) -> Result<AiPlanResponse> {
-    if api_key.trim().is_empty() {
-        bail!("未配置 Gemini API Key。请到 https://aistudio.google.com/apikey 免费创建后填入设置。");
-    }
-    let prompt = user_prompt.trim();
-    let media = validate_attachments(attachments)?;
-    if prompt.is_empty() && media.is_empty() {
-        bail!("请输入需求描述，或上传/录制附件");
-    }
-
-    let model = if model.trim().is_empty() {
-        DEFAULT_MODEL
-    } else {
-        model.trim()
-    };
-
-    let context = build_context(data);
-    let system = SYSTEM_PROMPT;
-    let need = if prompt.is_empty() {
-        "（用户未写文字，请根据附件中的截图理解需求）"
-    } else {
-        prompt
-    };
-    let user_text = format!(
-        "当前配置摘要（JSON）：\n{context}\n\n用户需求：\n{need}\n\n请只输出一个 JSON 对象，不要 Markdown。"
-    );
-
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={}",
-        urlencoding_key(api_key)
-    );
-
-    let mut contents: Vec<serde_json::Value> = Vec::with_capacity(history.len() + 1);
-    for (role, text) in history {
-        let role = match role.as_str() {
-            "model" | "assistant" => "model",
-            _ => "user",
-        };
-        if text.trim().is_empty() {
-            continue;
-        }
-        contents.push(serde_json::json!({
-            "role": role,
-            "parts": [{ "text": text }]
-        }));
-    }
-
-    let mut parts: Vec<serde_json::Value> = Vec::with_capacity(1 + media.len());
-    parts.push(serde_json::json!({ "text": user_text }));
-    for (mime, b64, _) in &media {
-        parts.push(serde_json::json!({
-            "inline_data": {
-                "mime_type": mime,
-                "data": b64
-            }
-        }));
-    }
-    contents.push(serde_json::json!({
-        "role": "user",
-        "parts": parts
-    }));
-
-    let body = serde_json::json!({
-        "systemInstruction": {
-            "parts": [{ "text": system }]
-        },
-        "contents": contents,
-        "generationConfig": {
-            "temperature": 0.2,
-            "responseMimeType": "application/json"
-        }
-    });
-
-    let timeout_secs = if media.is_empty() { 45 } else { 90 };
-    let resp = http
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .timeout(Duration::from_secs(timeout_secs))
-        .json(&body)
-        .send()
-        .await
-        .context("请求 Gemini 失败（请检查路由器能否访问 Google API）")?;
-
-    let status = resp.status();
-    let bytes = resp.bytes().await.context("读取 Gemini 响应失败")?;
-    let parsed: GeminiResponse =
-        serde_json::from_slice(&bytes).unwrap_or(GeminiResponse {
-            candidates: None,
-            error: None,
-            usage_metadata: None,
-        });
-
-    if !status.is_success() {
-        let msg = parsed
-            .error
-            .and_then(|e| e.message)
-            .unwrap_or_else(|| String::from_utf8_lossy(&bytes).to_string());
-        let code = status.as_u16();
-        if is_gemini_quota_error(code, &msg) {
-            let _ = store
-                .mark_quota_exhausted(model, parse_gemini_retry_secs(&msg))
-                .await;
-        }
-        bail!("{}", format_gemini_api_error(code, model, &msg));
-    }
-
-    let text = parsed
-        .candidates
-        .as_ref()
-        .and_then(|c| c.first())
-        .and_then(|c| c.content.as_ref())
-        .and_then(|c| c.parts.as_ref())
-        .and_then(|p| p.first())
-        .and_then(|p| p.text.as_ref())
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("Gemini 未返回文本"))?;
-
-    let meta = parsed.usage_metadata.unwrap_or_default();
-    let prompt_tokens = meta.prompt_token_count;
-    let output_tokens = meta
-        .candidates_token_count
-        .saturating_add(meta.thoughts_token_count);
-    let total_tokens = if meta.total_token_count > 0 {
-        meta.total_token_count
-    } else {
-        prompt_tokens.saturating_add(output_tokens)
-    };
-    let limit = if context_limit > 0 {
-        context_limit
-    } else {
-        default_context_limit(model)
-    };
-    let usage = store
-        .record_usage(model, prompt_tokens, output_tokens, total_tokens, limit)
-        .await;
-
-    let plan = parse_plan_json(&text)?;
-    let ops = prepare_ops(data, &plan.ops).context("模型方案与当前配置不一致，已拒绝")?;
-    let preview = preview_ops(&ops);
-    info!(
-        ops = ops.len(),
-        prompt_tokens,
-        output_tokens,
-        total_tokens,
-        "Gemini 配置方案已生成"
-    );
-    Ok(AiPlanResponse {
-        summary: if plan.summary.trim().is_empty() {
-            "已生成配置变更方案".into()
-        } else {
-            plan.summary
-        },
-        ops,
-        preview,
-        usage,
-        raw: text,
-        chat_id: None,
-    })
-}
-
-/// 按当前供应商分发配置方案生成。
-pub async fn plan_with_provider(
-    provider: &str,
-    http: &reqwest::Client,
-    api_key: &str,
-    model: &str,
-    data: &AppStateData,
-    user_prompt: &str,
-    store: &AiStore,
-    context_limit: u64,
-    history: &[(String, String)],
-    attachments: &[AiAttachment],
-) -> Result<AiPlanResponse> {
-    if normalize_provider(provider) == "deepseek" {
-        plan_with_deepseek(
-            http,
-            api_key,
-            model,
-            data,
-            user_prompt,
-            store,
-            context_limit,
-            history,
-            attachments,
-        )
-        .await
-    } else {
-        plan_with_gemini(
-            http,
-            api_key,
-            model,
-            data,
-            user_prompt,
-            store,
-            context_limit,
-            history,
-            attachments,
-        )
-        .await
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiChatResponse {
-    choices: Option<Vec<OpenAiChoice>>,
-    usage: Option<OpenAiUsage>,
-    error: Option<OpenAiError>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiChoice {
-    message: Option<OpenAiMessage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiMessage {
-    content: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct OpenAiUsage {
-    #[serde(default)]
-    prompt_tokens: u64,
-    #[serde(default)]
-    completion_tokens: u64,
-    #[serde(default)]
-    total_tokens: u64,
-}
-
 #[derive(Debug, Deserialize)]
 struct OpenAiError {
     message: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    code: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    r#type: Option<String>,
-}
-
-/// DeepSeek Chat Completions（OpenAI 兼容），文档：https://api-docs.deepseek.com/zh-cn/
-pub async fn plan_with_deepseek(
-    http: &reqwest::Client,
-    api_key: &str,
-    model: &str,
-    data: &AppStateData,
-    user_prompt: &str,
-    store: &AiStore,
-    context_limit: u64,
-    history: &[(String, String)],
-    attachments: &[AiAttachment],
-) -> Result<AiPlanResponse> {
-    if api_key.trim().is_empty() {
-        bail!("未配置 DeepSeek API Key。请到 https://platform.deepseek.com/api_keys 创建后填入设置。");
-    }
-    if !attachments.is_empty() {
-        bail!("DeepSeek 方案生成暂不支持图片附件，请去掉附件或改用 Gemini。");
-    }
-    let prompt = user_prompt.trim();
-    if prompt.is_empty() {
-        bail!("请输入需求描述");
-    }
-
-    let model = if model.trim().is_empty() || !model_fits_provider("deepseek", model) {
-        DEFAULT_DEEPSEEK_MODEL
-    } else {
-        model.trim()
-    };
-
-    let context = build_context(data);
-    let user_text = format!(
-        "当前配置摘要（JSON）：\n{context}\n\n用户需求：\n{prompt}\n\n请只输出一个 JSON 对象，不要 Markdown。"
-    );
-
-    let mut messages: Vec<serde_json::Value> = Vec::with_capacity(history.len() + 2);
-    messages.push(serde_json::json!({
-        "role": "system",
-        "content": SYSTEM_PROMPT
-    }));
-    for (role, text) in history {
-        let role = match role.as_str() {
-            "model" | "assistant" => "assistant",
-            _ => "user",
-        };
-        if text.trim().is_empty() {
-            continue;
-        }
-        messages.push(serde_json::json!({
-            "role": role,
-            "content": text
-        }));
-    }
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": user_text
-    }));
-
-    let body = serde_json::json!({
-        "model": model,
-        "messages": messages,
-        "temperature": 0.2,
-        "response_format": { "type": "json_object" },
-        "thinking": { "type": "disabled" },
-        "stream": false
-    });
-
-    let url = format!("{DEEPSEEK_BASE_URL}/chat/completions");
-    let resp = http
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()))
-        .timeout(Duration::from_secs(90))
-        .json(&body)
-        .send()
-        .await
-        .context("请求 DeepSeek 失败（请检查路由器能否访问 api.deepseek.com）")?;
-
-    let status = resp.status();
-    let bytes = resp.bytes().await.context("读取 DeepSeek 响应失败")?;
-    let parsed: OpenAiChatResponse =
-        serde_json::from_slice(&bytes).unwrap_or(OpenAiChatResponse {
-            choices: None,
-            usage: None,
-            error: None,
-        });
-
-    if !status.is_success() {
-        let msg = parsed
-            .error
-            .and_then(|e| e.message)
-            .unwrap_or_else(|| String::from_utf8_lossy(&bytes).to_string());
-        let code = status.as_u16();
-        if code == 429 {
-            let _ = store.mark_quota_exhausted(model, 60).await;
-            bail!(
-                "DeepSeek 请求过于频繁或并发已满（模型 {model}）。请稍后重试，或在设置中换 deepseek-v4-flash。"
-            );
-        }
-        if code == 401 || code == 403 {
-            bail!("DeepSeek API Key 无效或无权访问：{msg}");
-        }
-        if code == 402 {
-            bail!("DeepSeek 余额不足，请到 platform.deepseek.com 充值后再试。");
-        }
-        bail!("DeepSeek HTTP {code}: {msg}");
-    }
-
-    let text = parsed
-        .choices
-        .as_ref()
-        .and_then(|c| c.first())
-        .and_then(|c| c.message.as_ref())
-        .and_then(|m| m.content.as_ref())
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("DeepSeek 未返回文本"))?;
-
-    let usage_raw = parsed.usage.unwrap_or_default();
-    let prompt_tokens = usage_raw.prompt_tokens;
-    let output_tokens = usage_raw.completion_tokens;
-    let total_tokens = if usage_raw.total_tokens > 0 {
-        usage_raw.total_tokens
-    } else {
-        prompt_tokens.saturating_add(output_tokens)
-    };
-    let limit = if context_limit > 0 {
-        context_limit
-    } else {
-        default_context_limit(model)
-    };
-    let _ = store
-        .record_usage(model, prompt_tokens, output_tokens, total_tokens, limit)
-        .await;
-    let usage = store.usage_public_live(http).await;
-
-    let plan = parse_plan_json(&text)?;
-    let ops = prepare_ops(data, &plan.ops).context("模型方案与当前配置不一致，已拒绝")?;
-    let preview = preview_ops(&ops);
-    info!(
-        ops = ops.len(),
-        prompt_tokens,
-        output_tokens,
-        total_tokens,
-        "DeepSeek 配置方案已生成"
-    );
-    Ok(AiPlanResponse {
-        summary: if plan.summary.trim().is_empty() {
-            "已生成配置变更方案".into()
-        } else {
-            plan.summary
-        },
-        ops,
-        preview,
-        usage,
-        raw: text,
-        chat_id: None,
-    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -1961,7 +1523,9 @@ fn parse_pricing_tiers(body: &str) -> std::collections::HashMap<String, bool> {
         let end = ids.get(i + 1).map(|(s, _)| *s).unwrap_or(body.len());
         let chunk = &body[*start..end];
         // 优先 Standard 段
-        let std_start = chunk.find("### Standard").or_else(|| chunk.find(">Standard<"));
+        let std_start = chunk
+            .find("### Standard")
+            .or_else(|| chunk.find(">Standard<"));
         let search = if let Some(s) = std_start {
             &chunk[s..]
         } else {
@@ -2085,7 +1649,11 @@ pub async fn list_gemini_models(
         })
         .filter_map(|m| {
             let raw = m.name.unwrap_or_default();
-            let id = raw.strip_prefix("models/").unwrap_or(&raw).trim().to_string();
+            let id = raw
+                .strip_prefix("models/")
+                .unwrap_or(&raw)
+                .trim()
+                .to_string();
             if id.is_empty() {
                 return None;
             }
@@ -2126,7 +1694,8 @@ pub async fn list_gemini_models(
             "unknown" => 1,
             _ => 2,
         };
-        ra.cmp(&rb).then_with(|| a.display_name.cmp(&b.display_name))
+        ra.cmp(&rb)
+            .then_with(|| a.display_name.cmp(&b.display_name))
     });
     if models.is_empty() {
         let (tier, tier_label) = tier_strings(Some(true));
@@ -2140,17 +1709,6 @@ pub async fn list_gemini_models(
         });
     }
     Ok(AiModelsResponse { models })
-}
-
-fn parse_plan_json(text: &str) -> Result<AiPlan> {
-    let trimmed = text.trim();
-    let json_str = if let Some(start) = trimmed.find('{') {
-        let end = trimmed.rfind('}').unwrap_or(trimmed.len() - 1);
-        &trimmed[start..=end]
-    } else {
-        trimmed
-    };
-    serde_json::from_str(json_str).with_context(|| format!("解析 Gemini JSON 失败: {json_str}"))
 }
 
 pub fn build_context(data: &AppStateData) -> String {
@@ -2217,44 +1775,12 @@ pub fn build_context(data: &AppStateData) -> String {
         "landings": landings,
         "known_region_group_names_hint": [
             "🇭🇰 香港","🇹🇼 台湾","🇯🇵 日本","🇸🇬 新加坡","🇰🇷 韩国","🇺🇸 美国",
-            "🇬🇧 英国","🇩🇪 德国","🇫🇷 法国","🇨🇦 加拿大","🇦🇺 澳大利亚","🌐 其他",
-            "🤖 AI","💰 币安","📺 奈飞","⛓ 链路","🚀 默认","DIRECT","REJECT"
+            "🇬🇧 英国","🇩🇪 德国","🇫🇷 法国","🇨🇦 加拿大","🇦🇺 澳大利亚","🧬 IPv6","🌐 其他",
+            "🤖 AI","🔍 Google","⌨️ Cursor","🐙 GitHub","💰 币安","📺 奈飞","⛓ 链路","🚀 默认","DIRECT","REJECT"
         ]
     })
     .to_string()
 }
-
-const SYSTEM_PROMPT: &str = r#"你是 omni-acl4ssr-agent（OpenWrt 本地 Mihomo 订阅转换）的配置助手。
-根据用户需求，输出对「用户策略组 / 规则集 / 局域网分流 / 落地代理」的变更计划。可在一次回复中组合多种 ops。
-
-硬性规则：
-1. 只输出一个 JSON 对象，字段：summary (string), ops (array)。不要 Markdown 代码块。
-2. 不要修改国家/地区自动托管组（带 filter 的 url-test 组）；不要删除 g-default、g-chain。
-3. groups_mode=managed 时，用户策略组是没有 filter 的 select 组（如 AI/币安/奈飞或用户自建）；proxies[] 应使用配置摘要里 known_region_group_names_hint 的精确名称（含 emoji），并按用户要求的先后顺序排列。
-4. 规则集 rules 为多行文本，每行一条 Clash 规则载荷（通常不含策略名），如 DOMAIN-SUFFIX,tradingview.com；策略组写在 group 字段（一般对应用户策略组名）。
-5. 局域网分流 src 为 IP 或 CIDR；target 为策略组名或 DIRECT/REJECT。
-6. 落地代理为 SOCKS5/HTTP 节点：landing_type 为 socks5 或 http；dialer_proxy 可选（前置策略组/节点名，空表示独立落地）。摘要里 password_set=true 表示已有密码；更新时未给出 password 字段则保留原密码。
-7. 删除/更新时尽量使用配置摘要里已有的 id；若只有名称也可填 name。
-8. 所有 proxies[] / group / target / dialer_proxy 必须是：配置摘要里已有的精确组名、本批 ops 里即将 add_group 的 name，或 DIRECT/REJECT。地区组必须带 emoji 前缀（如 🇭🇰 香港），禁止虚构不存在的组名或 id。
-9. 若摘要里已有同名项，用 update_*；没有则用 add_*。禁止对不存在的 id 做 update/delete。
-10. 没有需要变更时 ops 可为 []，summary 说明原因。服务端会校验整批 ops 能否在真实配置上顺序执行；校验失败不会把虚假方案交给用户。
-
-示例（TradingView）：应产出 add_group（proxies 用摘要中的 🇭🇰 香港/🇹🇼 台湾/🇯🇵 日本/🇰🇷 韩国）+ add_ruleset（group 为新组名，rules 含 DOMAIN-SUFFIX,tradingview.com）；已有同名则 update_*。
-
-ops.op 取值与字段：
-- add_group: name, proxies[]
-- update_group: id 或 name, 可选 name/proxies
-- delete_group: id 或 name
-- add_ruleset: name, group, rules, 可选 enabled
-- update_ruleset: id 或 name, 可选 name/group/rules/enabled
-- delete_ruleset: id 或 name
-- add_lan_route: src, target, 可选 name/enabled
-- update_lan_route: id 或 name, 可选 name/src/target/enabled
-- delete_lan_route: id 或 name
-- add_landing: name, server, 可选 landing_type/port/username/password/dialer_proxy/enabled
-- update_landing: id 或 name, 可选 name/landing_type/server/port/username/password/dialer_proxy/enabled
-- delete_landing: id 或 name
-"#;
 
 const REGION_NAME_HINTS: &[&str] = &[
     "🇭🇰 香港",
@@ -2268,8 +1794,12 @@ const REGION_NAME_HINTS: &[&str] = &[
     "🇫🇷 法国",
     "🇨🇦 加拿大",
     "🇦🇺 澳大利亚",
+    "🧬 IPv6",
     "🌐 其他",
     "🤖 AI",
+    "🔍 Google",
+    "⌨️ Cursor",
+    "🐙 GitHub",
     "💰 币安",
     "📺 奈飞",
     "⛓ 链路",
@@ -2292,9 +1822,7 @@ fn op_rank(op: &str) -> u8 {
 
 fn core_group_label(s: &str) -> String {
     s.chars()
-        .filter(|c| {
-            c.is_ascii_alphanumeric() || ('\u{4e00}'..='\u{9fff}').contains(c) || *c == '_'
-        })
+        .filter(|c| c.is_ascii_alphanumeric() || ('\u{4e00}'..='\u{9fff}').contains(c) || *c == '_')
         .flat_map(|c| c.to_lowercase())
         .collect()
 }
@@ -2486,8 +2014,7 @@ fn dry_run_ops(data: &AppStateData, ops: &[AiOp]) -> Result<()> {
     let mut sim = data.clone();
     let _ = collapse_duplicate_config(&mut sim);
     for (i, op) in ops.iter().enumerate() {
-        apply_one(&mut sim, op)
-            .with_context(|| format!("ops[{}] 无法在当前配置上执行", i + 1))?;
+        apply_one(&mut sim, op).with_context(|| format!("ops[{}] 无法在当前配置上执行", i + 1))?;
     }
     Ok(())
 }
@@ -2500,11 +2027,6 @@ pub fn prepare_ops(data: &AppStateData, ops: &[AiOp]) -> Result<Vec<AiOp>> {
     let ops = normalize_ops(data, ops)?;
     dry_run_ops(data, &ops)?;
     Ok(ops)
-}
-
-#[allow(dead_code)]
-pub fn validate_ops(data: &AppStateData, ops: &[AiOp]) -> Result<()> {
-    prepare_ops(data, ops).map(|_| ())
 }
 
 fn parse_landing_type(raw: &str) -> Result<LandingType> {
@@ -2542,12 +2064,7 @@ fn resolve_group<'a>(data: &'a AppStateData, op: &AiOp) -> Result<&'a ProxyGroup
             }
         }
     }
-    let hint = op
-        .id
-        .as_deref()
-        .or(op.name.as_deref())
-        .unwrap_or("")
-        .trim();
+    let hint = op.id.as_deref().or(op.name.as_deref()).unwrap_or("").trim();
     if hint.is_empty() {
         bail!("未找到策略组（缺少 id/name）");
     }
@@ -2614,17 +2131,11 @@ pub fn preview_ops(ops: &[AiOp]) -> Vec<String> {
             ),
             "update_group" => format!(
                 "更新策略组 {}",
-                op.id
-                    .as_deref()
-                    .or(op.name.as_deref())
-                    .unwrap_or("?")
+                op.id.as_deref().or(op.name.as_deref()).unwrap_or("?")
             ),
             "delete_group" => format!(
                 "删除策略组 {}",
-                op.id
-                    .as_deref()
-                    .or(op.name.as_deref())
-                    .unwrap_or("?")
+                op.id.as_deref().or(op.name.as_deref()).unwrap_or("?")
             ),
             "add_ruleset" => format!(
                 "新增规则集「{}」→ {}",
@@ -2633,17 +2144,11 @@ pub fn preview_ops(ops: &[AiOp]) -> Vec<String> {
             ),
             "update_ruleset" => format!(
                 "更新规则集 {}",
-                op.id
-                    .as_deref()
-                    .or(op.name.as_deref())
-                    .unwrap_or("?")
+                op.id.as_deref().or(op.name.as_deref()).unwrap_or("?")
             ),
             "delete_ruleset" => format!(
                 "删除规则集 {}",
-                op.id
-                    .as_deref()
-                    .or(op.name.as_deref())
-                    .unwrap_or("?")
+                op.id.as_deref().or(op.name.as_deref()).unwrap_or("?")
             ),
             "add_lan_route" => format!(
                 "新增局域网 {} → {}",
@@ -2680,17 +2185,11 @@ pub fn preview_ops(ops: &[AiOp]) -> Vec<String> {
             ),
             "update_landing" => format!(
                 "更新落地代理 {}",
-                op.id
-                    .as_deref()
-                    .or(op.name.as_deref())
-                    .unwrap_or("?")
+                op.id.as_deref().or(op.name.as_deref()).unwrap_or("?")
             ),
             "delete_landing" => format!(
                 "删除落地代理 {}",
-                op.id
-                    .as_deref()
-                    .or(op.name.as_deref())
-                    .unwrap_or("?")
+                op.id.as_deref().or(op.name.as_deref()).unwrap_or("?")
             ),
             other => format!("未知操作 {other}"),
         })
@@ -2792,7 +2291,11 @@ fn apply_one(data: &mut AppStateData, op: &AiOp) -> Result<String> {
         "update_group" => {
             let id = resolve_group(data, op)?.id.clone();
             if let Some(name) = op.name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                if data.groups.iter().any(|x| x.id != id && x.name.trim() == name) {
+                if data
+                    .groups
+                    .iter()
+                    .any(|x| x.id != id && x.name.trim() == name)
+                {
                     bail!("已存在同名策略组「{name}」，无法重命名");
                 }
             }
@@ -2877,7 +2380,11 @@ fn apply_one(data: &mut AppStateData, op: &AiOp) -> Result<String> {
         "update_ruleset" => {
             let id = resolve_ruleset(data, op)?.id.clone();
             if let Some(name) = op.name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                if data.rulesets.iter().any(|x| x.id != id && x.name.trim() == name) {
+                if data
+                    .rulesets
+                    .iter()
+                    .any(|x| x.id != id && x.name.trim() == name)
+                {
                     bail!("已存在同名规则集「{name}」，无法重命名");
                 }
             }
@@ -2971,11 +2478,20 @@ fn apply_one(data: &mut AppStateData, op: &AiOp) -> Result<String> {
                 if !looks_like_src(src) {
                     bail!("src 格式无效: {src}");
                 }
-                if data.lan_routes.iter().any(|x| x.id != id && x.src.trim() == src) {
+                if data
+                    .lan_routes
+                    .iter()
+                    .any(|x| x.id != id && x.src.trim() == src)
+                {
                     bail!("已存在相同源地址的局域网分流 {src}");
                 }
             }
-            if let Some(target) = op.target.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(target) = op
+                .target
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
                 if target != "DIRECT"
                     && target != "REJECT"
                     && !data.groups.iter().any(|g| g.name == target)
@@ -2990,7 +2506,12 @@ fn apply_one(data: &mut AppStateData, op: &AiOp) -> Result<String> {
                 if let Some(src) = op.src.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
                     r.src = src.into();
                 }
-                if let Some(target) = op.target.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                if let Some(target) = op
+                    .target
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
                     r.target = target.into();
                 }
                 if let Some(en) = op.enabled {
@@ -3032,11 +2553,13 @@ fn apply_one(data: &mut AppStateData, op: &AiOp) -> Result<String> {
             if port == 0 {
                 bail!("port 无效");
             }
-            if let Some(d) = op.dialer_proxy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                if d != "DIRECT"
-                    && d != "REJECT"
-                    && !data.groups.iter().any(|g| g.name == d)
-                {
+            if let Some(d) = op
+                .dialer_proxy
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if d != "DIRECT" && d != "REJECT" && !data.groups.iter().any(|g| g.name == d) {
                     bail!("落地前置策略组「{d}」不存在");
                 }
             }
@@ -3081,15 +2604,21 @@ fn apply_one(data: &mut AppStateData, op: &AiOp) -> Result<String> {
         "update_landing" => {
             let id = resolve_landing(data, op)?.id.clone();
             if let Some(name) = op.name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                if data.landings.iter().any(|x| x.id != id && x.name.trim() == name) {
+                if data
+                    .landings
+                    .iter()
+                    .any(|x| x.id != id && x.name.trim() == name)
+                {
                     bail!("已存在同名落地代理「{name}」，无法重命名");
                 }
             }
-            if let Some(d) = op.dialer_proxy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                if d != "DIRECT"
-                    && d != "REJECT"
-                    && !data.groups.iter().any(|g| g.name == d)
-                {
+            if let Some(d) = op
+                .dialer_proxy
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if d != "DIRECT" && d != "REJECT" && !data.groups.iter().any(|g| g.name == d) {
                     bail!("落地前置策略组「{d}」不存在");
                 }
             }
@@ -3100,7 +2629,12 @@ fn apply_one(data: &mut AppStateData, op: &AiOp) -> Result<String> {
                 if let Some(t) = op.landing_type.as_deref() {
                     l.landing_type = parse_landing_type(t)?;
                 }
-                if let Some(server) = op.server.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                if let Some(server) = op
+                    .server
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
                     l.server = server.into();
                 }
                 if let Some(port) = op.port {
@@ -3139,6 +2673,23 @@ fn apply_one(data: &mut AppStateData, op: &AiOp) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ops_from_plan_json(text: &str) -> Vec<AiOp> {
+        #[derive(Deserialize)]
+        struct Plan {
+            ops: Vec<AiOp>,
+        }
+        let trimmed = text.trim();
+        let json_str = if let Some(start) = trimmed.find('{') {
+            let end = trimmed.rfind('}').unwrap_or(trimmed.len() - 1);
+            &trimmed[start..=end]
+        } else {
+            trimmed
+        };
+        serde_json::from_str::<Plan>(json_str)
+            .unwrap_or_else(|e| panic!("解析方案 JSON 失败: {e}: {json_str}"))
+            .ops
+    }
 
     #[test]
     fn prepare_normalizes_region_aliases_and_orders_ops() {
@@ -3228,9 +2779,9 @@ mod tests {
           {"op":"add_group","name":"TradingView","proxies":["🇭🇰 香港","🇹🇼 台湾"]},
           {"op":"add_ruleset","name":"TradingView","group":"TradingView","rules":"DOMAIN-SUFFIX,tradingview.com"}
         ]}"#;
-        let plan = parse_plan_json(text).unwrap();
-        apply_ops(&mut data, &plan.ops).unwrap();
-        apply_ops(&mut data, &plan.ops).unwrap();
+        let ops = ops_from_plan_json(text);
+        apply_ops(&mut data, &ops).unwrap();
+        apply_ops(&mut data, &ops).unwrap();
         let groups: Vec<_> = data
             .groups
             .iter()
@@ -3289,7 +2840,10 @@ mod tests {
         assert!(notes.iter().any(|n| n.contains("策略组")));
         assert!(notes.iter().any(|n| n.contains("规则集")));
         assert_eq!(
-            data.groups.iter().filter(|g| g.name == "TradingView").count(),
+            data.groups
+                .iter()
+                .filter(|g| g.name == "TradingView")
+                .count(),
             1
         );
         assert_eq!(
@@ -3313,9 +2867,9 @@ mod tests {
     fn parses_plan_and_validates_add_lan() {
         let mut data = AppStateData::default_skeleton();
         let text = r#"{"summary":"ok","ops":[{"op":"add_lan_route","src":"172.16.1.50","target":"📺 奈飞","name":"电视"}]}"#;
-        let plan = parse_plan_json(text).unwrap();
-        validate_ops(&data, &plan.ops).unwrap();
-        let applied = apply_ops(&mut data, &plan.ops).unwrap();
+        let ops = ops_from_plan_json(text);
+        prepare_ops(&data, &ops).unwrap();
+        let applied = apply_ops(&mut data, &ops).unwrap();
         assert_eq!(data.lan_routes.len(), 1);
         assert!(applied[0].contains("172.16.1.50"));
     }
@@ -3340,16 +2894,16 @@ mod tests {
             password: None,
             dialer_proxy: None,
         }];
-        assert!(validate_ops(&data, &ops).is_err());
+        assert!(prepare_ops(&data, &ops).is_err());
     }
 
     #[test]
     fn applies_add_landing() {
         let mut data = AppStateData::default_skeleton();
         let text = r#"{"summary":"ok","ops":[{"op":"add_landing","name":"家宽SOCKS","landing_type":"socks5","server":"127.0.0.1","port":1080,"dialer_proxy":"🇭🇰 香港"}]}"#;
-        let plan = parse_plan_json(text).unwrap();
-        validate_ops(&data, &plan.ops).unwrap();
-        let applied = apply_ops(&mut data, &plan.ops).unwrap();
+        let ops = ops_from_plan_json(text);
+        prepare_ops(&data, &ops).unwrap();
+        let applied = apply_ops(&mut data, &ops).unwrap();
         assert_eq!(data.landings.len(), 1);
         assert_eq!(data.landings[0].dialer_proxy, "🇭🇰 香港");
         assert!(applied[0].contains("家宽SOCKS"));

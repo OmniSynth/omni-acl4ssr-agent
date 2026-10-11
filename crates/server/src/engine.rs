@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::net::Ipv6Addr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -34,7 +35,11 @@ impl SubCacheMeta {
             proxy_count: result.proxy_count,
             group_count: result.group_count,
             rule_count: result.rule_count,
-            region_count: result.regions.iter().filter(|r| r.id != "other").count(),
+            region_count: result
+                .regions
+                .iter()
+                .filter(|r| r.id != "other" && r.id != "ipv6")
+                .count(),
             unmatched_count: result.unmatched.len(),
             fetch_warnings: result.fetch_warnings.len(),
             groups_mode: result.groups_mode,
@@ -152,10 +157,13 @@ impl UpstreamCache {
     }
 
     pub async fn set(&self, url: String, body: String) {
-        self.inner
-            .write()
-            .await
-            .insert(url, UpstreamEntry { body, at: Instant::now() });
+        self.inner.write().await.insert(
+            url,
+            UpstreamEntry {
+                body,
+                at: Instant::now(),
+            },
+        );
     }
 }
 
@@ -306,7 +314,13 @@ pub async fn convert(
 
     let root = root_meta;
     let proxy_names = proxy_names(&all_proxies);
-    info!(count = proxy_names.len(), sources = urls.len(), "聚合完成");
+    let ipv6_names = ipv6_proxy_names(&all_proxies);
+    info!(
+        count = proxy_names.len(),
+        ipv6 = ipv6_names.len(),
+        sources = urls.len(),
+        "聚合完成"
+    );
     let mut landing_names = Vec::new();
     for landing in data.landings.iter().filter(|l| l.enabled) {
         if landing.server.trim().is_empty() || landing.port == 0 {
@@ -317,7 +331,8 @@ pub async fn convert(
         landing_names.push(landing.name.clone());
     }
 
-    let (effective_groups, plan_meta) = resolve_groups(data, &proxy_names, region_extras)?;
+    let (effective_groups, plan_meta) =
+        resolve_groups(data, &proxy_names, &ipv6_names, region_extras)?;
     let default_group = match data.groups_mode {
         GroupsMode::Managed => NAME_DEFAULT.to_string(),
         GroupsMode::Custom => data.profile.default_group.clone(),
@@ -357,20 +372,14 @@ pub async fn convert(
         }
 
         let mut map = serde_yaml::Mapping::new();
-        map.insert(
-            Value::String("name".into()),
-            Value::String(g.name.clone()),
-        );
+        map.insert(Value::String("name".into()), Value::String(g.name.clone()));
         map.insert(
             Value::String("type".into()),
             Value::String(g.group_type.as_clash().into()),
         );
         map.insert(Value::String("proxies".into()), Value::Sequence(members));
         if matches!(g.group_type, GroupType::UrlTest) {
-            map.insert(
-                Value::String("url".into()),
-                Value::String(g.url.clone()),
-            );
+            map.insert(Value::String("url".into()), Value::String(g.url.clone()));
             map.insert(
                 Value::String("interval".into()),
                 Value::Number(g.interval.into()),
@@ -398,10 +407,7 @@ pub async fn convert(
     copy_if_present(&root, &mut out, "ipv6");
     copy_if_present(&root, &mut out, "dns");
     if !out.contains_key(Value::String("mode".into())) {
-        out.insert(
-            Value::String("mode".into()),
-            Value::String("rule".into()),
-        );
+        out.insert(Value::String("mode".into()), Value::String("rule".into()));
     }
 
     out.insert(
@@ -435,14 +441,23 @@ pub async fn convert(
 fn resolve_groups(
     data: &AppStateData,
     proxy_names: &[String],
+    ipv6_names: &[String],
     region_extras: &[RegionEntry],
-) -> Result<(Vec<crate::model::ProxyGroup>, (Vec<RegionStat>, Vec<String>))> {
+) -> Result<(
+    Vec<crate::model::ProxyGroup>,
+    (Vec<RegionStat>, Vec<String>),
+)> {
     match data.groups_mode {
         GroupsMode::Managed => {
-            let plan: ManagedPlan =
-                regions::build_managed_groups(proxy_names, region_extras, &data.groups)?;
+            let plan: ManagedPlan = regions::build_managed_groups(
+                proxy_names,
+                ipv6_names,
+                region_extras,
+                &data.groups,
+            )?;
             info!(
                 regions = plan.regions.len(),
+                ipv6 = ipv6_names.len(),
                 unmatched = plan.unmatched.len(),
                 groups = plan.groups.len(),
                 extras = region_extras.len(),
@@ -479,12 +494,12 @@ async fn fetch_upstream_resilient(
     ua: &str,
     upstream_cache: &UpstreamCache,
 ) -> Result<String> {
-    const UPSTREAM_TTL: Duration = Duration::from_secs(600);
+    const UPSTREAM_TTL: Duration = Duration::from_secs(10);
     if let Some(cached) = upstream_cache.get(url, UPSTREAM_TTL).await {
         return Ok(cached);
     }
 
-    let mut last_err: Option<anyhow::Error> = None;
+    let mut errors = Vec::new();
     for attempt in 1..=2u8 {
         match fetch_upstream(http, url, ua).await {
             Ok(text) => {
@@ -493,7 +508,7 @@ async fn fetch_upstream_resilient(
             }
             Err(err) => {
                 warn!(url = %url, attempt, error = %err, "reqwest 拉取失败");
-                last_err = Some(err);
+                errors.push(format!("reqwest#{attempt}: {err:#}"));
             }
         }
         match fetch_upstream_curl(url, ua).await {
@@ -504,17 +519,21 @@ async fn fetch_upstream_resilient(
             }
             Err(err) => {
                 warn!(url = %url, attempt, error = %err, "curl 回退失败");
-                last_err = Some(err);
+                errors.push(format!("curl#{attempt}: {err:#}"));
             }
         }
         if attempt < 2 {
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
     }
-    match last_err {
-        Some(err) => Err(err),
-        None => bail!("拉取上游订阅失败"),
-    }
+    bail!(
+        "拉取上游订阅失败: {}",
+        if errors.is_empty() {
+            "未知错误".to_string()
+        } else {
+            errors.join(" | ")
+        }
+    );
 }
 
 async fn fetch_upstream(http: &reqwest::Client, url: &str, ua: &str) -> Result<String> {
@@ -613,6 +632,42 @@ fn proxy_names(proxies: &[Value]) -> Vec<String> {
         .collect()
 }
 
+/// `server` 为字面 IPv6 地址的节点名（域名节点无法判定，不含）。
+fn ipv6_proxy_names(proxies: &[Value]) -> Vec<String> {
+    proxies
+        .iter()
+        .filter_map(|p| {
+            let m = p.as_mapping()?;
+            let name = m
+                .get(Value::String("name".into()))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())?;
+            let server = m
+                .get(Value::String("server".into()))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if is_ipv6_server(server) {
+                Some(name.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn is_ipv6_server(server: &str) -> bool {
+    let s = server.trim();
+    if s.is_empty() {
+        return false;
+    }
+    // Clash 常见写法：[2001:db8::1]
+    let s = s
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(s);
+    s.parse::<Ipv6Addr>().is_ok()
+}
+
 fn landing_to_value(landing: &crate::model::LandingProxy) -> Value {
     let mut map = serde_yaml::Mapping::new();
     map.insert(
@@ -675,6 +730,7 @@ fn build_rules(data: &AppStateData, default_group: &str) -> Vec<String> {
             warn!(src = %route.src, "跳过无效局域网源地址");
         }
     }
+    // 自定义规则集优先于默认兜底；未命中的国外流量才进默认组
     for rs in data.rulesets.iter().filter(|r| r.enabled) {
         for line in rs.rules.lines() {
             let line = line.trim();
@@ -694,7 +750,7 @@ fn build_rules(data: &AppStateData, default_group: &str) -> Vec<String> {
             }
         }
     }
-    // ACL4SSR 风格收尾：先域名/geo 分流，再 IP；国外走默认组，国内直连
+    // 兜底：国内直连，其余国外流量进默认组（自定义规则集已在前面）
     rules.push("DOMAIN-SUFFIX,cn,DIRECT".into());
     rules.push(format!("GEOSITE,geolocation-!cn,{default_group}"));
     rules.push(format!("GEOSITE,gfw,{default_group}"));
@@ -763,7 +819,10 @@ fn url_host(url: &str) -> Option<String> {
         .or_else(|| url.strip_prefix("http://"))?;
     let authority = rest.split('/').next()?.split('?').next()?;
     let authority = authority.rsplit('@').next()?;
-    let host = if let Some(end) = authority.strip_prefix('[').and_then(|_| authority.find(']')) {
+    let host = if let Some(end) = authority
+        .strip_prefix('[')
+        .and_then(|_| authority.find(']'))
+    {
         &authority[1..end]
     } else {
         match authority.rsplit_once(':') {
@@ -821,12 +880,18 @@ mod rule_tests {
     fn rules_follow_acl4ssr_tail_order() {
         let rules = build_rules(&sample_data(), NAME_DEFAULT);
         let service = rules.iter().position(|r| r.contains("openai.com")).unwrap();
-        let priv_lan = rules.iter().position(|r| r.starts_with("IP-CIDR,192.168")).unwrap();
+        let priv_lan = rules
+            .iter()
+            .position(|r| r.starts_with("IP-CIDR,192.168"))
+            .unwrap();
         let geo_not_cn = rules
             .iter()
             .position(|r| r.contains("geolocation-!cn"))
             .unwrap();
-        let gfw = rules.iter().position(|r| r.starts_with("GEOSITE,gfw,")).unwrap();
+        let gfw = rules
+            .iter()
+            .position(|r| r.starts_with("GEOSITE,gfw,"))
+            .unwrap();
         let geo_cn = rules.iter().position(|r| r == "GEOSITE,CN,DIRECT").unwrap();
         let geoip = rules
             .iter()
@@ -844,6 +909,18 @@ mod rule_tests {
     fn rules_include_private_direct() {
         let rules = build_rules(&sample_data(), NAME_DEFAULT);
         assert!(rules.iter().any(|r| r == "GEOSITE,private,DIRECT"));
-        assert!(rules.iter().any(|r| r == "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve"));
+        assert!(rules
+            .iter()
+            .any(|r| r == "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve"));
+    }
+
+    #[test]
+    fn detects_literal_ipv6_server() {
+        assert!(is_ipv6_server("2001:db8::1"));
+        assert!(is_ipv6_server("[2001:db8::1]"));
+        assert!(is_ipv6_server(" ::1 "));
+        assert!(!is_ipv6_server("127.0.0.1"));
+        assert!(!is_ipv6_server("hk.example.com"));
+        assert!(!is_ipv6_server(""));
     }
 }

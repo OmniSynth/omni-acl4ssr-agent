@@ -21,10 +21,8 @@ const DEFAULT_TTL_SECS: u64 = 30 * 24 * 3600; // 30 天
 const CACHE_FILE: &str = "countries-cache.json";
 
 /// jsDelivr 国内镜像（优先）
-const SOURCE_MIRROR: &str =
-    "https://cdn.jsdmirror.com/gh/mledoze/countries@master/countries.json";
-const SOURCE_PRIMARY: &str =
-    "https://cdn.jsdelivr.net/gh/mledoze/countries@master/countries.json";
+const SOURCE_MIRROR: &str = "https://cdn.jsdmirror.com/gh/mledoze/countries@master/countries.json";
+const SOURCE_PRIMARY: &str = "https://cdn.jsdelivr.net/gh/mledoze/countries@master/countries.json";
 const SOURCE_FALLBACK: &str =
     "https://raw.githubusercontent.com/mledoze/countries/master/countries.json";
 
@@ -181,7 +179,9 @@ fn now_unix() -> u64 {
 }
 
 async fn fetch_regions(http: &reqwest::Client) -> Result<(String, Vec<RegionEntry>)> {
-    let custom = std::env::var("OMNI_COUNTRIES_URL").ok().filter(|s| !s.trim().is_empty());
+    let custom = std::env::var("OMNI_COUNTRIES_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
     let urls: Vec<String> = if let Some(u) = custom {
         vec![u]
     } else {
@@ -217,8 +217,7 @@ async fn fetch_one(http: &reqwest::Client, url: &str) -> Result<Vec<RegionEntry>
         bail!("国家列表 HTTP {}", resp.status());
     }
     let body = resp.bytes().await.context("读取国家列表失败")?;
-    let list: Vec<ApiCountry> =
-        serde_json::from_slice(&body).context("解析国家列表 JSON 失败")?;
+    let list: Vec<ApiCountry> = serde_json::from_slice(&body).context("解析国家列表 JSON 失败")?;
     Ok(countries_to_regions(&list))
 }
 
@@ -254,9 +253,7 @@ fn api_to_entry(c: &ApiCountry) -> Option<RegionEntry> {
     let zho_common = zho.map(|t| t.common.trim()).filter(|s| !s.is_empty());
     let zho_official = zho.map(|t| t.official.trim()).filter(|s| !s.is_empty());
 
-    let label = zho_common
-        .or(zho_official)
-        .unwrap_or(c.name.common.trim());
+    let label = zho_common.or(zho_official).unwrap_or(c.name.common.trim());
     if label.is_empty() {
         return None;
     }
@@ -271,7 +268,10 @@ fn api_to_entry(c: &ApiCountry) -> Option<RegionEntry> {
     let mut alts: Vec<String> = Vec::new();
     push_alt(&mut alts, zho_common);
     push_alt(&mut alts, zho_official);
-    push_alt(&mut alts, Some(c.name.common.trim()).filter(|s| s.len() >= 4));
+    push_alt(
+        &mut alts,
+        Some(c.name.common.trim()).filter(|s| s.len() >= 4),
+    );
     push_alt(
         &mut alts,
         Some(c.name.official.trim()).filter(|s| s.len() >= 6),

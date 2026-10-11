@@ -57,9 +57,11 @@ pub async fn list_dhcp_clients() -> Vec<DhcpClient> {
 
     let mut out: Vec<DhcpClient> = by_ip.into_values().collect();
     out.sort_by(|a, b| {
-        ip_sort_key(&a.ip)
-            .cmp(&ip_sort_key(&b.ip))
-            .then_with(|| a.hostname.to_ascii_lowercase().cmp(&b.hostname.to_ascii_lowercase()))
+        ip_sort_key(&a.ip).cmp(&ip_sort_key(&b.ip)).then_with(|| {
+            a.hostname
+                .to_ascii_lowercase()
+                .cmp(&b.hostname.to_ascii_lowercase())
+        })
     });
     out
 }
@@ -220,19 +222,20 @@ async fn load_static_from_config(path: &Path) -> Vec<DhcpClient> {
     let mut mac = String::new();
     let mut ip = String::new();
 
-    let flush = |out: &mut Vec<DhcpClient>, name: &mut String, mac: &mut String, ip: &mut String| {
-        if looks_like_ipv4(ip) {
-            out.push(DhcpClient {
-                hostname: normalize_hostname(name),
-                ip: ip.clone(),
-                mac: normalize_mac(mac),
-                static_lease: true,
-            });
-        }
-        name.clear();
-        mac.clear();
-        ip.clear();
-    };
+    let flush =
+        |out: &mut Vec<DhcpClient>, name: &mut String, mac: &mut String, ip: &mut String| {
+            if looks_like_ipv4(ip) {
+                out.push(DhcpClient {
+                    hostname: normalize_hostname(name),
+                    ip: ip.clone(),
+                    mac: normalize_mac(mac),
+                    static_lease: true,
+                });
+            }
+            name.clear();
+            mac.clear();
+            ip.clear();
+        };
 
     for line in raw.lines() {
         let t = line.trim();

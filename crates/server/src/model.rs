@@ -71,11 +71,7 @@ impl Profile {
             }
         }
         self.upstream_urls = urls;
-        self.upstream_url = self
-            .upstream_urls
-            .first()
-            .cloned()
-            .unwrap_or_default();
+        self.upstream_url = self.upstream_urls.first().cloned().unwrap_or_default();
     }
 
     pub fn urls(&self) -> Vec<String> {
@@ -248,31 +244,56 @@ impl AppStateData {
                     url_test_group("g-jp", "🇯🇵 日本", r"(?i)日本|Japan"),
                     url_test_group("g-sg", "🇸🇬 新加坡", r"(?i)新加坡|Singapore|狮城"),
                     url_test_group("g-kr", "🇰🇷 韩国", r"(?i)韩国|Korea|首尔"),
-                    url_test_group(
-                        "g-us",
-                        "🇺🇸 美国",
-                        r"(?i)美国|Gemini|United States",
-                    ),
+                    url_test_group("g-us", "🇺🇸 美国", r"(?i)美国|Gemini|United States"),
                     url_test_group("g-ca", "🇨🇦 加拿大", r"(?i)加拿大|Canada"),
                     url_test_group("g-in", "🇮🇳 印度", r"(?i)印度|India"),
-                    url_test_group(
-                        "g-au",
-                        "🇦🇺 澳大利亚",
-                        r"(?i)澳大利亚|澳洲|Australia",
-                    ),
+                    url_test_group("g-au", "🇦🇺 澳大利亚", r"(?i)澳大利亚|澳洲|Australia"),
                 ];
-                let country_names: Vec<String> =
-                    countries.iter().map(|g| g.name.clone()).collect();
+                let country_names: Vec<String> = countries.iter().map(|g| g.name.clone()).collect();
                 let mut groups = countries;
                 groups.extend([
                     select_group(
                         "g-ai",
                         "🤖 AI",
                         vec![
-                            "🇺🇸 美国".into(),
                             "🇯🇵 日本".into(),
                             "🇸🇬 新加坡".into(),
+                            "🇹🇼 台湾".into(),
+                            "🇺🇸 美国".into(),
                             "🇭🇰 香港".into(),
+                        ],
+                    ),
+                    select_group(
+                        "g-google",
+                        "🔍 Google",
+                        vec![
+                            "🇯🇵 日本".into(),
+                            "🇸🇬 新加坡".into(),
+                            "🇹🇼 台湾".into(),
+                            "🇺🇸 美国".into(),
+                            "🇭🇰 香港".into(),
+                        ],
+                    ),
+                    select_group(
+                        "g-cursor",
+                        "⌨️ Cursor",
+                        vec![
+                            "🇯🇵 日本".into(),
+                            "🇸🇬 新加坡".into(),
+                            "🇹🇼 台湾".into(),
+                            "🇺🇸 美国".into(),
+                            "🇭🇰 香港".into(),
+                        ],
+                    ),
+                    select_group(
+                        "g-github",
+                        "🐙 GitHub",
+                        vec![
+                            "🇭🇰 香港".into(),
+                            "🇯🇵 日本".into(),
+                            "🇸🇬 新加坡".into(),
+                            "🇹🇼 台湾".into(),
+                            "🇺🇸 美国".into(),
                         ],
                     ),
                     select_group(
@@ -298,7 +319,18 @@ impl AppStateData {
                     ),
                     select_group("g-chain", "⛓ 链路", country_names.clone()),
                     {
-                        select_group("g-default", NAME_DEFAULT, country_names)
+                        let preferred = ["🇭🇰 香港", "🇯🇵 日本", "🇸🇬 新加坡", "🇹🇼 台湾", "🇺🇸 美国"];
+                        let mut ordered: Vec<String> = preferred
+                            .iter()
+                            .filter(|n| country_names.iter().any(|c| c == *n))
+                            .map(|n| (*n).to_string())
+                            .collect();
+                        for name in &country_names {
+                            if !ordered.iter().any(|n| n == name) {
+                                ordered.push(name.clone());
+                            }
+                        }
+                        select_group("g-default", NAME_DEFAULT, ordered)
                     },
                 ]);
                 groups
@@ -315,6 +347,51 @@ impl AppStateData {
                         "DOMAIN-SUFFIX,anthropic.com",
                         "DOMAIN-SUFFIX,claude.ai",
                         "GEOSITE,openai",
+                    ]
+                    .join("\n"),
+                },
+                RuleSet {
+                    id: "r-google".into(),
+                    name: "Google".into(),
+                    group: "🔍 Google".into(),
+                    enabled: true,
+                    rules: [
+                        "DOMAIN,dns.google",
+                        "DOMAIN-SUFFIX,google.com",
+                        "DOMAIN-SUFFIX,googleapis.com",
+                        "DOMAIN-SUFFIX,gstatic.com",
+                        "DOMAIN-SUFFIX,gmail.com",
+                        "DOMAIN-SUFFIX,googleusercontent.com",
+                        "DOMAIN-SUFFIX,google",
+                        "GEOSITE,google",
+                    ]
+                    .join("\n"),
+                },
+                RuleSet {
+                    id: "r-cursor".into(),
+                    name: "Cursor".into(),
+                    group: "⌨️ Cursor".into(),
+                    enabled: true,
+                    rules: [
+                        "DOMAIN-SUFFIX,cursor.com",
+                        "DOMAIN-SUFFIX,cursor.sh",
+                        "DOMAIN-SUFFIX,cursorapi.com",
+                        "DOMAIN-SUFFIX,todesktop.com",
+                    ]
+                    .join("\n"),
+                },
+                RuleSet {
+                    id: "r-github".into(),
+                    name: "GitHub".into(),
+                    group: "🐙 GitHub".into(),
+                    enabled: true,
+                    rules: [
+                        "DOMAIN-SUFFIX,github.com",
+                        "DOMAIN-SUFFIX,github.io",
+                        "DOMAIN-SUFFIX,githubusercontent.com",
+                        "DOMAIN-SUFFIX,githubassets.com",
+                        "DOMAIN-SUFFIX,ghcr.io",
+                        "GEOSITE,github",
                     ]
                     .join("\n"),
                 },

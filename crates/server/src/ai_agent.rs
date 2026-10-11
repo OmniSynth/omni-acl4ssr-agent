@@ -9,9 +9,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use crate::ai::{
-    self, prepare_ops, preview_ops, AiAttachment, AiOp, AiStore, AiUsagePublic,
-};
+use crate::ai::{self, prepare_ops, preview_ops, AiAttachment, AiOp, AiStore, AiUsagePublic};
 use crate::countries::WorldCatalog;
 use crate::engine::{self, UpstreamCache};
 use crate::model::AppStateData;
@@ -307,10 +305,7 @@ fn step_label(name: &str, result: &Value) -> String {
             } else {
                 format!(
                     "已读取策略组「{}」",
-                    result
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("?")
+                    result.get("name").and_then(|v| v.as_str()).unwrap_or("?")
                 )
             }
         }
@@ -324,10 +319,7 @@ fn step_label(name: &str, result: &Value) -> String {
             } else {
                 format!(
                     "已读取规则集「{}」",
-                    result
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("?")
+                    result.get("name").and_then(|v| v.as_str()).unwrap_or("?")
                 )
             }
         }
@@ -341,7 +333,11 @@ fn step_label(name: &str, result: &Value) -> String {
         ),
         "search_config" => format!(
             "已搜索配置，命中 {} 处",
-            result.get("hits").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0)
+            result
+                .get("hits")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0)
         ),
         "validate_ops" => {
             if result.get("ok").and_then(|v| v.as_bool()) == Some(true) {
@@ -354,9 +350,18 @@ fn step_label(name: &str, result: &Value) -> String {
             if result.get("ok").and_then(|v| v.as_bool()) == Some(true) {
                 format!(
                     "转换诊断：{} 节点 / {} 组 / {} 规则",
-                    result.get("proxy_count").and_then(|v| v.as_u64()).unwrap_or(0),
-                    result.get("group_count").and_then(|v| v.as_u64()).unwrap_or(0),
-                    result.get("rule_count").and_then(|v| v.as_u64()).unwrap_or(0)
+                    result
+                        .get("proxy_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    result
+                        .get("group_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    result
+                        .get("rule_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
                 )
             } else {
                 "转换诊断失败".into()
@@ -377,7 +382,10 @@ async fn exec_tool(
     match name {
         "get_overview" => Ok((tool_overview(data), None)),
         "list_groups" => {
-            let user_only = args.get("user_only").and_then(|v| v.as_bool()).unwrap_or(false);
+            let user_only = args
+                .get("user_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             Ok((tool_list_groups(data, user_only), None))
         }
         "get_group" => Ok((tool_get_group(data, args), None)),
@@ -386,7 +394,11 @@ async fn exec_tool(
         "list_lan_routes" => Ok((tool_list_lan(data), None)),
         "list_landings" => Ok((tool_list_landings(data), None)),
         "search_config" => {
-            let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let q = args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
             Ok((tool_search(data, q), None))
         }
         "validate_ops" => {
@@ -442,10 +454,7 @@ async fn exec_tool(
                 }
                 "advice" | "error" => {
                     parsed.kind = kind;
-                    Ok((
-                        json!({ "ok": true, "kind": parsed.kind }),
-                        Some(parsed),
-                    ))
+                    Ok((json!({ "ok": true, "kind": parsed.kind }), Some(parsed)))
                 }
                 other => Ok((
                     json!({
@@ -509,10 +518,15 @@ fn tool_list_groups(data: &AppStateData, user_only: bool) -> Value {
 
 fn tool_get_group(data: &AppStateData, args: &Value) -> Value {
     let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let g = data.groups.iter().find(|g| {
-        (!id.is_empty() && g.id == id) || (!name.is_empty() && g.name == name)
-    });
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let g = data
+        .groups
+        .iter()
+        .find(|g| (!id.is_empty() && g.id == id) || (!name.is_empty() && g.name == name));
     match g {
         Some(g) => json!({
             "id": g.id,
@@ -547,10 +561,15 @@ fn tool_list_rulesets(data: &AppStateData) -> Value {
 
 fn tool_get_ruleset(data: &AppStateData, args: &Value) -> Value {
     let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let r = data.rulesets.iter().find(|r| {
-        (!id.is_empty() && r.id == id) || (!name.is_empty() && r.name == name)
-    });
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let r = data
+        .rulesets
+        .iter()
+        .find(|r| (!id.is_empty() && r.id == id) || (!name.is_empty() && r.name == name));
     match r {
         Some(r) => json!({
             "id": r.id,
@@ -610,7 +629,9 @@ fn tool_search(data: &AppStateData, query: &str) -> Value {
     for g in &data.groups {
         if g.name.to_ascii_lowercase().contains(&q)
             || g.id.to_ascii_lowercase().contains(&q)
-            || g.proxies.iter().any(|p| p.to_ascii_lowercase().contains(&q))
+            || g.proxies
+                .iter()
+                .any(|p| p.to_ascii_lowercase().contains(&q))
         {
             hits.push(json!({ "type": "group", "id": g.id, "name": g.name }));
         }
@@ -1081,7 +1102,11 @@ async fn run_agent_deepseek(
     let mut last_usage = store.usage_public().await;
     let mut raw_last = String::new();
     let mut last_tool_hint = String::new();
-    let think_type = if thinking_enabled { "enabled" } else { "disabled" };
+    let think_type = if thinking_enabled {
+        "enabled"
+    } else {
+        "disabled"
+    };
 
     for round in 0..MAX_TOOL_ROUNDS {
         emit_status(&events, format!("模型推理中（第 {} 轮）…", round + 1));
@@ -1133,14 +1158,16 @@ async fn run_agent_deepseek(
 
         if let Some(u) = acc.usage.as_ref() {
             let pt = u.get("prompt_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-            let ot = u.get("completion_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-            let tt = u.get("total_tokens").and_then(|x| x.as_u64()).unwrap_or(pt + ot);
-            let hit = u
-                .get("prompt_cache_hit_tokens")
-                .and_then(|x| x.as_u64());
-            let miss = u
-                .get("prompt_cache_miss_tokens")
-                .and_then(|x| x.as_u64());
+            let ot = u
+                .get("completion_tokens")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0);
+            let tt = u
+                .get("total_tokens")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(pt + ot);
+            let hit = u.get("prompt_cache_hit_tokens").and_then(|x| x.as_u64());
+            let miss = u.get("prompt_cache_miss_tokens").and_then(|x| x.as_u64());
             let limit = if context_limit > 0 {
                 context_limit
             } else {
@@ -1170,14 +1197,7 @@ async fn run_agent_deepseek(
 
         if tool_calls.is_empty() {
             if let Ok(submit) = serde_json::from_str::<SubmitResultArgs>(&acc.content) {
-                return finalize_submit(
-                    data,
-                    submit,
-                    steps,
-                    thinking_all,
-                    last_usage,
-                    acc.content,
-                );
+                return finalize_submit(data, submit, steps, thinking_all, last_usage, acc.content);
             }
             if round + 1 >= MAX_TOOL_ROUNDS {
                 break;
@@ -1239,7 +1259,11 @@ async fn run_agent_deepseek(
             }));
         }
         if let Some(s) = submitted {
-            info!(rounds = round + 1, steps = steps.len(), "DeepSeek Agent 完成");
+            info!(
+                rounds = round + 1,
+                steps = steps.len(),
+                "DeepSeek Agent 完成"
+            );
             return finalize_submit(data, s, steps, thinking_all, last_usage, raw_last);
         }
     }
@@ -1299,10 +1323,7 @@ async fn run_agent_gemini(
         },
     );
     if thinking_enabled && !gemini_supports_thinking(model) {
-        emit_status(
-            &events,
-            "当前 Gemini 模型不支持思考模式，已按普通模式继续",
-        );
+        emit_status(&events, "当前 Gemini 模型不支持思考模式，已按普通模式继续");
     }
     let context = ai::build_context(data);
 

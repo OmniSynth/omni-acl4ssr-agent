@@ -1,6 +1,6 @@
 //! 订阅节点地区识别与托管策略组生成。
 //!
-//! `groups_mode = managed` 时：只生成有节点的地区组，AI/币安/奈飞/默认按可用地区自动编排。
+//! `groups_mode = managed` 时：只生成有节点的地区组，AI/Cursor/GitHub/币安/奈飞/默认按可用地区自动编排。
 //! 常见地区见 `catalog()`；其余国家由 `countries` 模块缓存补全。
 
 use std::collections::{HashMap, HashSet};
@@ -192,13 +192,19 @@ fn builtin_entries() -> Vec<RegionEntry> {
         .collect()
 }
 
-const PREF_AI: &[&str] = &["us", "jp", "sg", "hk", "tw", "kr", "gb", "de"];
+const PREF_AI: &[&str] = &["jp", "sg", "tw", "us", "hk"];
+const PREF_CURSOR: &[&str] = &["jp", "sg", "tw", "us", "hk"];
+const PREF_GITHUB: &[&str] = &["hk", "jp", "sg", "tw", "us"];
+const PREF_DEFAULT: &[&str] = &["hk", "jp", "sg", "tw", "us"];
 const PREF_BINANCE: &[&str] = &["hk", "sg", "jp", "us", "tw"];
 const PREF_NETFLIX: &[&str] = &["sg", "jp", "tw", "us", "hk", "kr"];
 
 pub const NAME_DEFAULT: &str = "🚀 默认";
 pub const NAME_OTHER: &str = "🌐 其他";
+pub const NAME_IPV6: &str = "🧬 IPv6";
 pub const NAME_AI: &str = "🤖 AI";
+pub const NAME_CURSOR: &str = "⌨️ Cursor";
+pub const NAME_GITHUB: &str = "🐙 GitHub";
 pub const NAME_BINANCE: &str = "💰 币安";
 pub const NAME_NETFLIX: &str = "📺 奈飞";
 pub const NAME_CHAIN: &str = "⛓ 链路";
@@ -245,7 +251,11 @@ fn select(id: &str, name: &str, proxies: Vec<String>) -> ProxyGroup {
     }
 }
 
-fn pick(prefs: &[&str], available: &HashMap<&str, &RegionEntry>, fallback: &[String]) -> Vec<String> {
+fn pick(
+    prefs: &[&str],
+    available: &HashMap<&str, &RegionEntry>,
+    fallback: &[String],
+) -> Vec<String> {
     let mut out: Vec<String> = prefs
         .iter()
         .filter_map(|id| available.get(id).map(|r| r.name.clone()))
@@ -256,9 +266,12 @@ fn pick(prefs: &[&str], available: &HashMap<&str, &RegionEntry>, fallback: &[Str
     out
 }
 
-/// 托管模式下的「用户策略组」：无 filter，且不是默认/链路/其他。
+/// 托管模式下的「用户策略组」：无 filter，且不是默认/链路/其他/IPv6。
 pub fn is_user_strategy_group(g: &ProxyGroup) -> bool {
-    if matches!(g.id.as_str(), "g-default" | "g-chain" | "g-other") {
+    if matches!(
+        g.id.as_str(),
+        "g-default" | "g-chain" | "g-other" | "g-ipv6"
+    ) {
         return false;
     }
     g.filter.trim().is_empty()
@@ -267,6 +280,10 @@ pub fn is_user_strategy_group(g: &ProxyGroup) -> bool {
 fn default_prefs_for(id: &str, name: &str) -> &'static [&'static str] {
     if id == "g-ai" || name == NAME_AI {
         PREF_AI
+    } else if id == "g-cursor" || name == NAME_CURSOR {
+        PREF_CURSOR
+    } else if id == "g-github" || name == NAME_GITHUB {
+        PREF_GITHUB
     } else if id == "g-binance" || name == NAME_BINANCE {
         PREF_BINANCE
     } else if id == "g-netflix" || name == NAME_NETFLIX {
@@ -274,6 +291,28 @@ fn default_prefs_for(id: &str, name: &str) -> &'static [&'static str] {
     } else {
         &[]
     }
+}
+
+/// 优选地区在前，其余成员保持原相对顺序（含 IPv6 / 其他）。
+fn order_by_pref(
+    names: &[String],
+    available: &HashMap<&str, &RegionEntry>,
+    prefs: &[&str],
+) -> Vec<String> {
+    let mut out = Vec::with_capacity(names.len());
+    for id in prefs {
+        if let Some(region) = available.get(id) {
+            if names.iter().any(|n| n == &region.name) {
+                out.push(region.name.clone());
+            }
+        }
+    }
+    for name in names {
+        if !out.iter().any(|n| n == name) {
+            out.push(name.clone());
+        }
+    }
+    out
 }
 
 /// 解析用户策略组成员：仅保留当前存在的地区组 / DIRECT / REJECT；全空则按组类型回退。
@@ -313,10 +352,12 @@ fn resolve_user_proxies(
 
 /// 按节点名生成托管策略组。
 /// - 国家/地区组：按订阅自动识别
+/// - IPv6 组：`server` 为字面 IPv6 地址的节点（由调用方传入名称列表）
 /// - 用户策略组（无 filter）：按配置输出，成员引用地区组名
 /// `extras` 为公开 API 缓存的补充国家（已排除内置 id）；转换时只读内存传入。
 pub fn build_managed_groups(
     proxy_names: &[String],
+    ipv6_names: &[String],
     extras: &[RegionEntry],
     custom_groups: &[ProxyGroup],
 ) -> Result<ManagedPlan> {
@@ -349,15 +390,16 @@ pub fn build_managed_groups(
             }
         }
         match hit {
-            Some(id) => buckets.entry(id.to_string()).or_default().push(name.clone()),
+            Some(id) => buckets
+                .entry(id.to_string())
+                .or_default()
+                .push(name.clone()),
             None => unmatched.push(name.clone()),
         }
     }
 
-    let by_id: HashMap<&str, &RegionEntry> = compiled
-        .iter()
-        .map(|(r, _)| (r.id.as_str(), r))
-        .collect();
+    let by_id: HashMap<&str, &RegionEntry> =
+        compiled.iter().map(|(r, _)| (r.id.as_str(), r)).collect();
 
     let mut available: HashMap<&str, &RegionEntry> = HashMap::new();
     let mut regions = Vec::new();
@@ -401,6 +443,18 @@ pub fn build_managed_groups(
         ));
     }
 
+    if !ipv6_names.is_empty() {
+        regions.push(RegionStat {
+            id: "ipv6".into(),
+            name: NAME_IPV6.into(),
+            count: ipv6_names.len(),
+        });
+        let mut ipv6 = url_test("g-ipv6", NAME_IPV6, "");
+        ipv6.proxies = ipv6_names.to_vec();
+        region_names.push(NAME_IPV6.into());
+        groups.push(ipv6);
+    }
+
     if !unmatched.is_empty() {
         regions.push(RegionStat {
             id: "other".into(),
@@ -425,7 +479,7 @@ pub fn build_managed_groups(
     // 链路：可选全部地区策略组（落地 SOCKS/HTTP 由 engine 注入队首）
     groups.push(select("g-chain", NAME_CHAIN, region_names.clone()));
 
-    let default_proxies = region_names;
+    let default_proxies = order_by_pref(&region_names, &available, PREF_DEFAULT);
     groups.push(select("g-default", NAME_DEFAULT, default_proxies));
 
     Ok(ManagedPlan {
@@ -453,8 +507,12 @@ mod tests {
             NAME_AI,
             vec!["🇺🇸 美国".into(), "🇯🇵 日本".into(), "🇭🇰 香港".into()],
         )];
-        let plan = build_managed_groups(&names, &[], &custom).unwrap();
-        let map: HashMap<_, _> = plan.regions.iter().map(|r| (r.id.as_str(), r.count)).collect();
+        let plan = build_managed_groups(&names, &[], &[], &custom).unwrap();
+        let map: HashMap<_, _> = plan
+            .regions
+            .iter()
+            .map(|r| (r.id.as_str(), r.count))
+            .collect();
         assert_eq!(map.get("hk"), Some(&2));
         assert_eq!(map.get("us"), Some(&1));
         assert_eq!(map.get("jp"), Some(&1));
@@ -482,8 +540,12 @@ mod tests {
             filter: r"(?i)挪威|Norway|\bNO\d*\b|🇳🇴".into(),
         }];
         let names = vec!["挪威-01".into(), "专线".into()];
-        let plan = build_managed_groups(&names, &extras, &[]).unwrap();
-        let map: HashMap<_, _> = plan.regions.iter().map(|r| (r.id.as_str(), r.count)).collect();
+        let plan = build_managed_groups(&names, &[], &extras, &[]).unwrap();
+        let map: HashMap<_, _> = plan
+            .regions
+            .iter()
+            .map(|r| (r.id.as_str(), r.count))
+            .collect();
         assert_eq!(map.get("no"), Some(&1));
         assert_eq!(map.get("other"), Some(&1));
     }
@@ -496,9 +558,12 @@ mod tests {
             NAME_AI,
             vec!["🇯🇵 日本".into(), "🇭🇰 香港".into()],
         )];
-        let plan = build_managed_groups(&names, &[], &custom).unwrap();
+        let plan = build_managed_groups(&names, &[], &[], &custom).unwrap();
         let ai = plan.groups.iter().find(|g| g.id == "g-ai").unwrap();
-        assert_eq!(ai.proxies, vec!["🇯🇵 日本".to_string(), "🇭🇰 香港".to_string()]);
+        assert_eq!(
+            ai.proxies,
+            vec!["🇯🇵 日本".to_string(), "🇭🇰 香港".to_string()]
+        );
     }
 
     #[test]
@@ -508,7 +573,7 @@ mod tests {
             select("g-ai", NAME_AI, vec!["🇭🇰 香港".into(), "🇺🇸 美国".into()]),
             select("g-game", "🎮 游戏", vec!["🇭🇰 香港".into()]),
         ];
-        let plan = build_managed_groups(&names, &[], &custom).unwrap();
+        let plan = build_managed_groups(&names, &[], &[], &custom).unwrap();
         assert!(plan.groups.iter().any(|g| g.id == "g-game"));
         let ai = plan.groups.iter().find(|g| g.id == "g-ai").unwrap();
         // 美国本次无节点，被过滤
@@ -519,15 +584,105 @@ mod tests {
     #[test]
     fn empty_regions_fallback_to_other() {
         let names = vec!["专线A".into(), "专线B".into()];
-        let custom = vec![select(
-            "g-ai",
-            NAME_AI,
-            vec!["🇺🇸 美国".into()],
-        )];
-        let plan = build_managed_groups(&names, &[], &custom).unwrap();
+        let custom = vec![select("g-ai", NAME_AI, vec!["🇺🇸 美国".into()])];
+        let plan = build_managed_groups(&names, &[], &[], &custom).unwrap();
         assert_eq!(plan.regions.len(), 1);
         assert_eq!(plan.regions[0].id, "other");
         let ai = plan.groups.iter().find(|g| g.id == "g-ai").unwrap();
         assert_eq!(ai.proxies, vec![NAME_OTHER.to_string()]);
+    }
+
+    #[test]
+    fn ipv6_group_from_server_list() {
+        let names = vec!["香港 IPv6".into(), "香港 A01".into(), "美国 IPv6".into()];
+        let ipv6 = vec!["香港 IPv6".into(), "美国 IPv6".into()];
+        let plan = build_managed_groups(&names, &ipv6, &[], &[]).unwrap();
+        let map: HashMap<_, _> = plan
+            .regions
+            .iter()
+            .map(|r| (r.id.as_str(), r.count))
+            .collect();
+        assert_eq!(map.get("ipv6"), Some(&2));
+        assert_eq!(map.get("hk"), Some(&2));
+        assert_eq!(map.get("us"), Some(&1));
+        let g = plan.groups.iter().find(|g| g.id == "g-ipv6").unwrap();
+        assert_eq!(g.name, NAME_IPV6);
+        assert_eq!(g.proxies, ipv6);
+        let chain = plan.groups.iter().find(|g| g.id == "g-chain").unwrap();
+        assert!(chain.proxies.iter().any(|p| p == NAME_IPV6));
+        let default = plan.groups.iter().find(|g| g.id == "g-default").unwrap();
+        assert!(default.proxies.iter().any(|p| p == NAME_IPV6));
+    }
+
+    #[test]
+    fn default_group_orders_preferred_regions_first() {
+        let names = vec![
+            "美国-1".into(),
+            "台湾-1".into(),
+            "韩国-1".into(),
+            "新加坡-1".into(),
+            "日本-1".into(),
+            "香港-1".into(),
+        ];
+        let plan = build_managed_groups(&names, &[], &[], &[]).unwrap();
+        let default = plan.groups.iter().find(|g| g.id == "g-default").unwrap();
+        assert_eq!(
+            default.proxies,
+            vec![
+                "🇭🇰 香港".to_string(),
+                "🇯🇵 日本".to_string(),
+                "🇸🇬 新加坡".to_string(),
+                "🇹🇼 台湾".to_string(),
+                "🇺🇸 美国".to_string(),
+                "🇰🇷 韩国".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_builtin_groups_use_region_priority() {
+        let names = vec![
+            "香港-1".into(),
+            "日本-1".into(),
+            "新加坡-1".into(),
+            "台湾-1".into(),
+            "美国-1".into(),
+        ];
+        let custom = vec![
+            select("g-ai", NAME_AI, vec![]),
+            select("g-cursor", NAME_CURSOR, vec![]),
+            select("g-github", NAME_GITHUB, vec![]),
+        ];
+        let plan = build_managed_groups(&names, &[], &[], &custom).unwrap();
+        let asia = [
+            "🇯🇵 日本".to_string(),
+            "🇸🇬 新加坡".to_string(),
+            "🇹🇼 台湾".to_string(),
+            "🇺🇸 美国".to_string(),
+            "🇭🇰 香港".to_string(),
+        ];
+        let ai = plan.groups.iter().find(|g| g.id == "g-ai").unwrap();
+        let cursor = plan.groups.iter().find(|g| g.id == "g-cursor").unwrap();
+        let github = plan.groups.iter().find(|g| g.id == "g-github").unwrap();
+        assert_eq!(ai.proxies, asia);
+        assert_eq!(cursor.proxies, asia);
+        assert_eq!(
+            github.proxies,
+            vec![
+                "🇭🇰 香港".to_string(),
+                "🇯🇵 日本".to_string(),
+                "🇸🇬 新加坡".to_string(),
+                "🇹🇼 台湾".to_string(),
+                "🇺🇸 美国".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn ipv6_group_omitted_when_empty() {
+        let names = vec!["香港-1".into()];
+        let plan = build_managed_groups(&names, &[], &[], &[]).unwrap();
+        assert!(!plan.groups.iter().any(|g| g.id == "g-ipv6"));
+        assert!(!plan.regions.iter().any(|r| r.id == "ipv6"));
     }
 }

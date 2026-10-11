@@ -11,7 +11,37 @@ const DEFAULT_USER_GROUPS: Omit<ProxyGroup, "id">[] = [
     name: "🤖 AI",
     group_type: "select",
     filter: "",
-    proxies: ["🇺🇸 美国", "🇯🇵 日本", "🇸🇬 新加坡", "🇭🇰 香港"],
+    proxies: ["🇯🇵 日本", "🇸🇬 新加坡", "🇹🇼 台湾", "🇺🇸 美国", "🇭🇰 香港"],
+    url: "https://www.gstatic.com/generate_204",
+    interval: 300,
+    tolerance: 50,
+    lazy: true,
+  },
+  {
+    name: "🔍 Google",
+    group_type: "select",
+    filter: "",
+    proxies: ["🇯🇵 日本", "🇸🇬 新加坡", "🇹🇼 台湾", "🇺🇸 美国", "🇭🇰 香港"],
+    url: "https://www.gstatic.com/generate_204",
+    interval: 300,
+    tolerance: 50,
+    lazy: true,
+  },
+  {
+    name: "⌨️ Cursor",
+    group_type: "select",
+    filter: "",
+    proxies: ["🇯🇵 日本", "🇸🇬 新加坡", "🇹🇼 台湾", "🇺🇸 美国", "🇭🇰 香港"],
+    url: "https://www.gstatic.com/generate_204",
+    interval: 300,
+    tolerance: 50,
+    lazy: true,
+  },
+  {
+    name: "🐙 GitHub",
+    group_type: "select",
+    filter: "",
+    proxies: ["🇭🇰 香港", "🇯🇵 日本", "🇸🇬 新加坡", "🇹🇼 台湾", "🇺🇸 美国"],
     url: "https://www.gstatic.com/generate_204",
     interval: 300,
     tolerance: 50,
@@ -39,10 +69,16 @@ const DEFAULT_USER_GROUPS: Omit<ProxyGroup, "id">[] = [
   },
 ];
 
-const DEFAULT_USER_IDS = ["g-ai", "g-binance", "g-netflix"] as const;
+const DEFAULT_USER_IDS = ["g-ai", "g-google", "g-cursor", "g-github", "g-binance", "g-netflix"] as const;
 
 function isUserStrategyGroup(g: ProxyGroup): boolean {
-  if (g.id === "g-default" || g.id === "g-chain" || g.id === "g-other") return false;
+  if (
+    g.id === "g-default" ||
+    g.id === "g-chain" ||
+    g.id === "g-other" ||
+    g.id === "g-ipv6"
+  )
+    return false;
   return !String(g.filter || "").trim();
 }
 
@@ -211,7 +247,7 @@ export default function GroupsPage() {
           }
         >
           <p className="mb-3 text-xs text-fg-soft">
-            成员填地区组名或 DIRECT，逗号分隔。本次订阅没有的地区会自动忽略；AI/币安/奈飞若成员被清空则回退默认优选。
+            成员填地区组名或 DIRECT，逗号分隔。本次订阅没有的地区会自动忽略；AI、Cursor、GitHub、币安、奈飞若成员被清空则回退默认优选。
           </p>
           <div className="space-y-4">
             {userGroups.length === 0 && (

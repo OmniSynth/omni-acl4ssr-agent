@@ -69,7 +69,9 @@ async fn main() -> anyhow::Result<()> {
         world,
         ai,
         chats,
+        nikki_refresh: Arc::new(tokio::sync::Mutex::new(())),
     });
+    api::spawn_nikki_subscription_refresh(state.clone());
 
     let api = Router::new()
         .route("/health", get(api::health))
@@ -82,12 +84,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/rulesets", get(api::get_rulesets).put(api::put_rulesets))
         .route("/landings", get(api::get_landings).put(api::put_landings))
-        .route("/lan-routes", get(api::get_lan_routes).put(api::put_lan_routes))
-        .route("/dhcp-clients", get(api::get_dhcp_clients))
         .route(
-            "/nikki/subscriptions",
-            get(api::get_nikki_subscriptions),
+            "/lan-routes",
+            get(api::get_lan_routes).put(api::put_lan_routes),
         )
+        .route("/dhcp-clients", get(api::get_dhcp_clients))
+        .route("/nikki/subscriptions", get(api::get_nikki_subscriptions))
         .route("/nikki/panel", get(api::get_nikki_panel))
         .route(
             "/nikki/update-subscription",
@@ -103,7 +105,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/ai/plan", post(api::ai_plan))
         .route("/ai/transcribe", post(api::ai_transcribe))
         .route("/ai/apply", post(api::ai_apply))
-        .route("/ai/chats", get(api::list_ai_chats).post(api::create_ai_chat))
+        .route(
+            "/ai/chats",
+            get(api::list_ai_chats).post(api::create_ai_chat),
+        )
         .route(
             "/ai/chats/{id}",
             get(api::get_ai_chat)
@@ -121,8 +126,7 @@ async fn main() -> anyhow::Result<()> {
     let app = if web_dir.join("index.html").exists() {
         info!(path = %web_dir.display(), "托管前端静态资源");
         let index = web_dir.join("index.html");
-        let static_files =
-            ServeDir::new(web_dir).not_found_service(ServeFile::new(index));
+        let static_files = ServeDir::new(web_dir).not_found_service(ServeFile::new(index));
         app.fallback_service(static_files)
             .layer(middleware::from_fn(static_cache_headers))
     } else {

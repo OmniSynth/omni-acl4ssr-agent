@@ -221,7 +221,7 @@ export default function OverviewPage() {
               ? ` 识别 ${convertInfo.region_count} 个地区。`
               : null}
             {groupsMode === "managed"
-              ? " 托管模式下节点按地区归入 url-test 组（如 🇭🇰 香港），在 zashboard 需展开对应地区组才能看到全部节点。"
+              ? " 托管模式下节点按地区归入 url-test 组（如 🇭🇰 香港）；server 为 IPv6 字面地址的节点另入 🧬 IPv6。在 zashboard 需展开对应组才能看到全部节点。"
               : null}
           </p>
           {(convertInfo.fetch_warnings?.length ?? 0) > 0 ? (

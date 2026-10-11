@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use axum::Router;
 use axum_server::tls_rustls::RustlsConfig;
-use rcgen::{CertifiedKey, generate_simple_self_signed};
+use rcgen::{generate_simple_self_signed, CertifiedKey};
 use tracing::info;
 
 pub fn ensure_dev_cert(data_dir: &Path) -> Result<(PathBuf, PathBuf)> {
@@ -16,8 +16,7 @@ pub fn ensure_dev_cert(data_dir: &Path) -> Result<(PathBuf, PathBuf)> {
     if cert_path.is_file() && key_path.is_file() {
         return Ok((cert_path, key_path));
     }
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("创建 {} 失败", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("创建 {} 失败", dir.display()))?;
 
     // 覆盖常见本机/局域网访问名；IP 不匹配时浏览器仍会警告，用户信任后即为安全上下文
     let subject_alt_names = vec![
@@ -40,13 +39,7 @@ pub fn ensure_dev_cert(data_dir: &Path) -> Result<(PathBuf, PathBuf)> {
 pub async fn serve_https(app: Router, addr: SocketAddr, cert: &Path, key: &Path) -> Result<()> {
     let config = RustlsConfig::from_pem_file(cert, key)
         .await
-        .with_context(|| {
-            format!(
-                "加载 TLS 证书失败：{} / {}",
-                cert.display(),
-                key.display()
-            )
-        })?;
+        .with_context(|| format!("加载 TLS 证书失败：{} / {}", cert.display(), key.display()))?;
     info!(%addr, "HTTPS 监听（语音/麦克风请用此地址）");
     axum_server::bind_rustls(addr, config)
         .serve(app.into_make_service())

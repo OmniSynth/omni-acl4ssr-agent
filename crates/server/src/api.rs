@@ -2,6 +2,11 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// `/sub` 与上游正文的新鲜度。超过此时长的请求会重新拉取并转换。
+const SUB_CACHE_TTL: Duration = Duration::from_secs(10);
+/// 把转换结果写入 Nikki 并重载的周期。
+const NIKKI_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -19,11 +24,11 @@ use crate::ai_chats::ChatStore;
 use crate::countries::WorldCatalog;
 use crate::dhcp::{self, DhcpClient};
 use crate::engine::{self, UpstreamCache, YamlCache};
-use crate::nikki::{self, NikkiPanelInfo, NikkiSubscription, NikkiUpdateResult};
 use crate::model::{
-    AppStateData, ConvertRequest, ConvertResponse, GroupsModeBody, LandingProxy, LanRoute, Profile,
+    AppStateData, ConvertRequest, ConvertResponse, GroupsModeBody, LanRoute, LandingProxy, Profile,
     ProxyGroup, RuleSet,
 };
+use crate::nikki::{self, NikkiPanelInfo, NikkiSubscription, NikkiUpdateResult};
 use crate::store::Store;
 
 #[derive(Clone)]
@@ -35,6 +40,8 @@ pub struct AppState {
     pub world: Arc<WorldCatalog>,
     pub ai: AiStore,
     pub chats: ChatStore,
+    /// 手动更新与定时更新互斥，避免同时写 Nikki 订阅。
+    pub nikki_refresh: Arc<tokio::sync::Mutex<()>>,
 }
 
 type ApiResult<T> = Result<T, ApiError>;
@@ -252,6 +259,7 @@ pub async fn post_nikki_update_subscription(
     State(state): State<Arc<AppState>>,
     Json(body): Json<NikkiUpdateBody>,
 ) -> Json<NikkiUpdateResult> {
+    let _guard = state.nikki_refresh.lock().await;
     let data = state.store.get().await;
     let (sub_yaml, sub_meta) = if data.profile.enabled && !data.profile.urls().is_empty() {
         let extras = state.world.extras().await;
@@ -261,7 +269,7 @@ pub async fn post_nikki_update_subscription(
             &state.cache,
             &state.upstream_cache,
             &extras,
-            Duration::from_secs(300),
+            SUB_CACHE_TTL,
         )
         .await
         {
@@ -274,12 +282,8 @@ pub async fn post_nikki_update_subscription(
     } else {
         (None, None)
     };
-    let mut result = nikki::update_subscriptions(
-        body.section_id.as_deref(),
-        body.reload,
-        sub_yaml,
-    )
-    .await;
+    let mut result =
+        nikki::update_subscriptions(body.section_id.as_deref(), body.reload, sub_yaml).await;
     if result.ok {
         if let Some(meta) = sub_meta {
             result.message = nikki_update_message(&result, &meta);
@@ -297,7 +301,11 @@ pub async fn put_config(
     State(state): State<Arc<AppState>>,
     Json(data): Json<AppStateData>,
 ) -> ApiResult<Json<AppStateData>> {
-    state.store.replace(data).await.map_err(ApiError::internal)?;
+    state
+        .store
+        .replace(data)
+        .await
+        .map_err(ApiError::internal)?;
     state.cache.clear().await;
     Ok(Json(state.store.get().await))
 }
@@ -316,7 +324,11 @@ pub async fn convert(
             let key = engine::config_cache_key(&data, &extras);
             state
                 .cache
-                .set_full(key, result.yaml.clone(), engine::SubCacheMeta::from_convert(&result))
+                .set_full(
+                    key,
+                    result.yaml.clone(),
+                    engine::SubCacheMeta::from_convert(&result),
+                )
                 .await;
             let unmatched_samples: Vec<String> =
                 result.unmatched.iter().take(12).cloned().collect();
@@ -327,7 +339,11 @@ pub async fn convert(
                     result.proxy_count,
                     result.group_count,
                     result.rule_count,
-                    result.regions.iter().filter(|r| r.id != "other").count(),
+                    result
+                        .regions
+                        .iter()
+                        .filter(|r| r.id != "other" && r.id != "ipv6")
+                        .count(),
                     unmatched_count,
                     extras.len()
                 )
@@ -389,7 +405,7 @@ pub async fn subscription(State(state): State<Arc<AppState>>) -> ApiResult<Respo
         &state.cache,
         &state.upstream_cache,
         &extras,
-        Duration::from_secs(300),
+        SUB_CACHE_TTL,
     )
     .await
     .map_err(ApiError::internal)?;
@@ -398,6 +414,7 @@ pub async fn subscription(State(state): State<Arc<AppState>>) -> ApiResult<Respo
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "text/yaml; charset=utf-8"),
+            (header::CACHE_CONTROL, "max-age=10"),
             (
                 header::HeaderName::from_static("profile-update-interval"),
                 "12",
@@ -406,6 +423,50 @@ pub async fn subscription(State(state): State<Arc<AppState>>) -> ApiResult<Respo
         yaml,
     )
         .into_response())
+}
+
+/// 启动后稍等 Nikki 起来，之后每 5 分钟转换并写入本机订阅、重载生效。
+pub fn spawn_nikki_subscription_refresh(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        loop {
+            if let Ok(_guard) = state.nikki_refresh.try_lock() {
+                let data = state.store.get().await;
+                if data.profile.enabled && !data.profile.urls().is_empty() {
+                    let extras = state.world.extras().await;
+                    match engine::ensure_sub_yaml(
+                        &data,
+                        &state.http,
+                        &state.cache,
+                        &state.upstream_cache,
+                        &extras,
+                        SUB_CACHE_TTL,
+                    )
+                    .await
+                    {
+                        Ok((yaml, meta)) => {
+                            let result =
+                                nikki::update_subscriptions(None, true, Some(yaml)).await;
+                            if result.ok {
+                                tracing::info!(
+                                    message = %nikki_update_message(&result, &meta),
+                                    "定时更新订阅完成"
+                                );
+                            } else {
+                                tracing::warn!(message = %result.message, "定时更新订阅失败");
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!(error = %err, "定时更新：转换 /sub 失败");
+                        }
+                    }
+                }
+            } else {
+                tracing::info!("定时更新跳过：已有订阅更新在进行");
+            }
+            tokio::time::sleep(NIKKI_REFRESH_INTERVAL).await;
+        }
+    });
 }
 
 #[derive(Debug, Deserialize)]
@@ -476,9 +537,7 @@ pub struct BranchChatBody {
     pub message_id: String,
 }
 
-pub async fn get_ai_settings(
-    State(state): State<Arc<AppState>>,
-) -> Json<ai::AiSettingsPublic> {
+pub async fn get_ai_settings(State(state): State<Arc<AppState>>) -> Json<ai::AiSettingsPublic> {
     Json(state.ai.public().await)
 }
 
@@ -608,14 +667,21 @@ pub async fn ai_plan(
     let data = state.store.get().await;
     let thinking_enabled = settings.thinking_enabled;
 
-    let chat_id = match req.chat_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let chat_id = match req
+        .chat_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(id) => id.to_string(),
-        None => state
-            .chats
-            .create(None, &settings.model)
-            .await
-            .map_err(ApiError::internal)?
-            .id,
+        None => {
+            state
+                .chats
+                .create(None, &settings.model)
+                .await
+                .map_err(ApiError::internal)?
+                .id
+        }
     };
 
     let history = state
@@ -631,7 +697,12 @@ pub async fn ai_plan(
     );
 
     let mut user_prompt = req.prompt.trim().to_string();
-    if let Some(cid) = req.choice_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(cid) = req
+        .choice_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         let label = state
             .chats
             .resolve_choice_label(&chat_id, cid)
@@ -712,9 +783,14 @@ pub async fn ai_plan(
 
         match result {
             Ok(mut plan) => {
-                if let Err(e) =
-                    persist_agent_turn(&state_bg, &chat_id_bg, &stored_prompt_bg, &mut plan, &model_bg)
-                        .await
+                if let Err(e) = persist_agent_turn(
+                    &state_bg,
+                    &chat_id_bg,
+                    &stored_prompt_bg,
+                    &mut plan,
+                    &model_bg,
+                )
+                .await
                 {
                     let _ = tx.send(ai_agent::AgentEvent::Error {
                         message: e.message.clone(),
@@ -732,9 +808,8 @@ pub async fn ai_plan(
     });
 
     let stream = UnboundedReceiverStream::new(rx).map(|ev| {
-        let data = serde_json::to_string(&ev).unwrap_or_else(|_| {
-            "{\"type\":\"error\",\"message\":\"serialize failed\"}".into()
-        });
+        let data = serde_json::to_string(&ev)
+            .unwrap_or_else(|_| "{\"type\":\"error\",\"message\":\"serialize failed\"}".into());
         Ok::<Event, Infallible>(Event::default().data(data))
     });
     // 结束后再补一条 done，便于前端收尾
